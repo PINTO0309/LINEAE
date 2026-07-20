@@ -264,7 +264,7 @@ wheels = [
 
 [[package]]
 name = "lineae"
-version = "0.1.0"
+version = "1.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "addict", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },

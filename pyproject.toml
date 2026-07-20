@@ -1,6 +1,6 @@
 [project]
 name = "lineae"
-version = "0.1.0"
+version = "1.0.0"
 description = "Enhanced LINEA line detection with DINOv3 and distillation"
 readme = "README.md"
 requires-python = ">=3.11"
