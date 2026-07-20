@@ -1,2 +1,267 @@
 # LINEAE
-LINEAE: An enhanced version of high-speed, high-precision line detection using Scalable Transformers.
+
+LINEAE is an experimental successor to LINEA aimed at improving both line detection accuracy and inference speed. It keeps the LINEA Wireframe/YorkUrban data and detector semantics, and adds selectable HGNetV2/DINOv3 backbones, progressive unfreezing, reproducible resume, XL-to-smaller line-set distillation, an optional qualified-X teacher cascade, EMA, projected feature KD/intermediate-block fusion, exact-input teacher caching, memory-efficient SDPA for every DINO variant, eval-only versioned RoPE caching, allocation-light decoder broadcasts, bounded multi-scale anchor/position caching, and deployment benchmarks.
+
+The training and deployment implementation is self-contained and does not import either copied reference project. The dataset has been copied into the root `data/` directory as requested.
+
+## Implemented variants
+
+| Variant    | Backbone                            |   Initial input |
+| ---------- | ----------------------------------- | --------------: |
+| A / F / P  | HGNetV2 Atto / Femto / Pico         | 320 / 416 / 640 |
+| N          | HGNetV2-B0                          |             640 |
+| S / M      | DINOv3 Tiny / Tiny+                 |             640 |
+| L / X / XL | official DINOv3 S/16 / S+/16 / B/16 |             640 |
+
+The authoritative mapping, including exact bootstrap filenames, is in `models/lineae/variants.py`.
+
+## Parameter inventory
+
+The following exact counts are produced from each committed default config with pretrained loading disabled and after `model.deploy()`, matching the graph used by the Torch/ONNX/TensorRT benchmarks. `Backbone` means `model.backbone`: for DINO variants it includes the Simple Feature Pyramid (SFP), and for A/F/P it includes the learned synthetic P5. `After backbone` is the hybrid encoder plus decoder. Default output-KD adds no student parameters; optional feature-KD projections are training-only and are removed by `deploy()`.
+
+| Variant | Backbone (M) | After backbone (M) | Total (M) |
+| ------- | -----------: | -----------------: | --------: |
+| A       |          0.8 |                1.9 |       2.7 |
+| F       |          2.8 |                2.0 |       4.7 |
+| P       |          3.1 |                2.0 |       5.1 |
+| N       |          1.9 |                2.1 |       3.9 |
+| S       |          6.0 |                5.9 |      11.9 |
+| M       |         10.6 |                6.7 |      17.3 |
+| L       |         23.0 |                6.7 |      29.7 |
+| X       |         30.1 |                8.1 |      38.2 |
+| XL      |         88.4 |                8.1 |      96.5 |
+
+`M` is decimal millions (`1 M = 1,000,000` parameters); values are rounded to one decimal place while the regression test retains the exact integer counts.
+
+## Default epoch budgets
+
+The defaults are capacity-aware starting estimates, not empirically established optima. Wireframe train contains 5,000 images, so the committed single-GPU batch-8 profile performs 625 optimizer steps per epoch. Every full recipe applies cosine LR decay to `1e-7` over its complete optimizer-step horizon and selects `checkpoint_best.pth` by validation sAP10.
+
+The estimates combine three reference anchors. The original N recipe supplies N's 72 epochs. There are no A/F/P measurements, so their no-KD values conservatively multiply the reference 60/55/50 KD ladder by 1.2, producing 72/66/60. The DINO no-KD values follow the reference 45/45/40/35 trend for S/M/L/X. XL uses 36 rather than the shorter reference value of 20 because LINEAE does not fully unfreeze its 12-block backbone until epoch 25, leaving 11 fully unfrozen epochs for the accuracy-priority teacher. Direct-XL KD uses the 60/55/50/50/40/40/30/30 A-through-X capacity ladder. Its `T=1 -> 4` schedule is resolved over each recipe's actual optimizer-step horizon.
+
+| Variant | No-distillation config | Epochs | Steps | Direct-XL distillation config | Epochs | Steps |
+| --- | --- | --: | --: | --- | --: | --: |
+| A | `configs/lineae/lineae_a.py` | 72 | 45,000 | `configs/lineae/distill/lineae_a.py` | 60 | 37,500 |
+| F | `configs/lineae/lineae_f.py` | 66 | 41,250 | `configs/lineae/distill/lineae_f.py` | 55 | 34,375 |
+| P | `configs/lineae/lineae_p.py` | 60 | 37,500 | `configs/lineae/distill/lineae_p.py` | 50 | 31,250 |
+| N | `configs/lineae/lineae_n.py` | 72 | 45,000 | `configs/lineae/distill/lineae_n.py` | 50 | 31,250 |
+| S | `configs/lineae/baselines/lineae_s.py` | 45 | 28,125 | `configs/lineae/distill/lineae_s.py` | 40 | 25,000 |
+| M | `configs/lineae/lineae_m.py` | 45 | 28,125 | `configs/lineae/distill/lineae_m.py` | 40 | 25,000 |
+| L | `configs/lineae/lineae_l.py` | 40 | 25,000 | `configs/lineae/distill/lineae_l.py` | 30 | 18,750 |
+| X | `configs/lineae/lineae_x.py` | 35 | 21,875 | `configs/lineae/distill/lineae_x.py` | 30 | 18,750 |
+| XL | `configs/lineae/lineae_xl.py` | 36 | 22,500 | not applicable (supervised teacher) | — | — |
+
+Steps assume the default one-GPU batch-8 profile; DDP changes steps per rank but not images seen per epoch. These unequal budgets target a strong result for each capacity. For a causal no-KD versus KD comparison at equal compute, override both runs to the same explicit `epochs=<N>` and treat that as a separate matched experiment. `configs/lineae/lineae_s.py` remains the 36-epoch, batch-1, fixed-640 P0 pipeline probe; use the `baselines/` config for full no-KD S training.
+
+## LAB and backbone unfreezing
+
+LAB (`LearnableAffineBlock`) applies a learned scalar scale and bias after an activated HGNetV2 `ConvBNAct`. It is enabled for every HGNet student and is not part of DINOv3. The synthetic A/F/P P5 uses Conv-BN-ReLU without LAB.
+
+| Variant | LAB | LAB modules | LAB scalar parameters | Backbone-core schedule |
+| --- | --- | --: | --: | --- |
+| A | enabled | 20 | 40 | all HGNet stages trainable from epoch 0 |
+| F | enabled | 20 | 40 | all HGNet stages trainable from epoch 0 |
+| P | enabled | 25 | 50 | all HGNet stages trainable from epoch 0 |
+| N | enabled | 30 | 60 | all HGNet stages trainable from epoch 0 |
+| S / M / L / X / XL | not applicable | 0 | 0 | progressive 12-block DINO schedule |
+
+Progressive unfreezing is implemented for every DINO recipe. Epochs 0--4 freeze the DINO core; epoch 5 enables the last two transformer blocks; one earlier block is added every two epochs (depths 3, 4, ..., 11 at epochs 7, 9, ..., 23), and all 12 blocks are trainable from epoch 25 through the recipe's final epoch. The SFP, hybrid encoder, and decoder remain trainable throughout. Optimizer groups include the initially frozen DINO parameters from construction time, so late-unfrozen parameters retain stable optimizer/DDP topology.
+
+## Setup and preflight
+
+Python 3.11 or newer is required; this lower bound is imposed by the pinned `onnxruntime-gpu==1.26.0` export runtime.
+
+```bash
+uv sync --locked --extra dev --extra export
+uv run --locked python tools/checkpoint_preflight.py
+uv run --locked pytest -q
+```
+
+Every direct runtime, development, export, and TensorRT dependency is an exact `==` pin in `pyproject.toml`; the same direct versions are used on every supported Python minor. `uv.lock` fixes every transitive artifact and its hash; use `--locked` so setup fails instead of silently re-resolving it. Install the separately pinned TensorRT stack on the deployment host with `uv sync --locked --extra tensorrt`.
+
+The preflight validates all six bootstrap files in `ckpts/` by SHA-256, tensor count, width, and depth. It never downloads missing weights.
+
+## TensorBoard logging
+
+Training creates TensorBoardX event files directly under the configured `output_dir`; eval-only execution does not create a writer, and only distributed rank 0 writes events. A resumed run opens the same directory with `purge_step=checkpoint.global_step`, preventing stale events at and after the resume boundary from appearing beside the restored history.
+
+Training scalars use the cumulative successful optimizer-step count as their x-axis and are written every 10 successful updates. An AMP-overflow step that skips `optimizer.step()` is not written. With gradient accumulation, the logged losses are from the final microbatch that triggers the update, not an average over the accumulation window. `Loss/*` values are averaged across DDP ranks and already include their configured loss coefficients; they are contributions to the optimized objective rather than raw unweighted losses.
+
+| Tag | Availability | Meaning |
+| --- | --- | --- |
+| `Loss/total` | Every training recipe | Sum of every reduced, weighted supervised and KD loss component for the logged microbatch. This is the scalar checked for finiteness before backward. |
+| `Loss/loss_logits` | Every training recipe | Final decoder output's sigmoid focal classification loss, multiplied by `weight_dict['loss_logits']`. |
+| `Loss/loss_line` | Every training recipe | Final decoder output's endpoint-swap-invariant L1 line loss, multiplied by `weight_dict['loss_line']`. Lower is better for all `Loss/*` tags. |
+| `Loss/loss_logits_<i>`, `Loss/loss_line_<i>` | Auxiliary decoder loss enabled by default | Weighted supervised loss from intermediate decoder layer `<i>`; the final decoder layer uses the unsuffixed tags. |
+| `Loss/loss_logits_interm`, `Loss/loss_line_interm` | Every current training recipe | Weighted auxiliary supervision of the encoder's selected top-K proposals before decoder refinement. |
+| `Loss/loss_logits_dn_<i>`, `Loss/loss_line_dn_<i>` | Denoising enabled and the batch contains targets | Weighted loss for decoder layer `<i>` on synthetic noisy line/label queries. |
+| `Loss/loss_kd_logits` | Distillation only | Bernoulli-logit KL on Hungarian-matched student/teacher proposals, including `distill_class_weight` and the current KD warm-up weight. |
+| `Loss/loss_kd_line` | Distillation only | Endpoint-invariant Smooth-L1 on matched line segments, including `distill_line_weight` and the current KD warm-up weight. |
+| `Loss/loss_kd_feature` | Only when `distill_feature_weight > 0` | Mean aligned P3/P4/P5 feature loss, including feature and KD warm-up weights. It is absent from all default recipes. |
+| `Lr/pg_<i>` | Every training recipe | Current AdamW learning rate for optimizer parameter group `<i>`, after warm-up/cosine scheduling. |
+| `GradNorm/pg_<i>` | Every training recipe | L2 norm of the parameter group's accumulated gradients after AMP unscaling and before global gradient clipping. A frozen DINO group can report zero until its scheduled unfreeze. |
+
+The current optimizer group indices are stable across variants:
+
+| Group | Parameters |
+| --: | --- |
+| `pg_0` | Backbone-core weights excluding normalization parameters and biases; uses the configured backbone learning rate. |
+| `pg_1` | Backbone-core normalization parameters and biases; uses the backbone learning rate with zero weight decay. |
+| `pg_2` | Encoder/decoder normalization parameters and biases; uses the main learning rate with zero weight decay. |
+| `pg_3` | All remaining eligible parameters, including the SFP or synthetic P5, ordinary encoder/decoder weights, heads, embeddings, and optional feature-KD projections; uses the main learning rate and weight decay. |
+
+The loss logger is dynamic: if a non-default criterion emits `loss_lmap`, `loss_fgl`, `loss_ddf`, `_pre`, or `_pre_dn` keys, they appear automatically as `Loss/<key>`. Current committed defaults use only classification, line, auxiliary, denoising, and optional KD keys listed above.
+
+| Distillation tag | Meaning |
+| --- | --- |
+| `Distillation/weight` | Effective KD multiplier at this step: `distill_weight` times the linear `distill_warmup_steps` ramp. |
+| `Distillation/temperature` | Current cosine-scheduled teacher/student logit temperature, normally progressing from 1 to 4 over the configured run. |
+| `Distillation/matches` | Total Hungarian-matched proposal pairs in the current rank-0 microbatch after confidence filtering and `distill_top_k`; it is not reduced across DDP ranks. |
+| `Distillation/overhead_ms` | Rank-0 host elapsed time from starting teacher inference through return of the KD criterion, including matching and its GPU-to-CPU synchronization; it is a per-microbatch diagnostic, not a synchronized end-to-end GPU benchmark. |
+
+Validation scalars use the zero-based epoch number as their x-axis and are normally written after each completed epoch when evaluation is enabled. A bounded mid-epoch run can also write them at the current epoch index unless `--skip_eval` is set. Validation losses are dataset averages after DDP synchronization; sAP values are percentages, so higher is better.
+
+| Validation tag | Meaning |
+| --- | --- |
+| `Test/loss` | Sum of the weighted validation loss components. |
+| `Test/loss_logits` | Weighted final-output focal classification loss on validation data. |
+| `Test/loss_line` | Weighted final-output endpoint-invariant L1 line loss on validation data. |
+| `Test/sap5` | Structural average precision at line-distance threshold 5 in the evaluator's 128-coordinate system. |
+| `Test/sap10` | Structural average precision at threshold 10; this is the default checkpoint-selection metric. |
+| `Test/sap15` | Structural average precision at threshold 15. |
+
+Console/JSONL-only diagnostics are not silently represented in TensorBoard: epoch-averaged training meters, AMP overflow counts, KD cache hits/misses/writes, peak CUDA memory, epoch duration, parameter count, best epoch/metric, and detailed profiling timings remain in stdout, `log.txt`, manifests, or dedicated profiling reports.
+
+## S one-batch probe
+
+```bash
+python main.py -c configs/lineae/lineae_s.py \
+--coco_path data/wireframe_processed --amp --num_workers 0 \
+--max_train_steps 1 --skip_eval --skip_profile --verify_optimizer_step \
+--options output_dir=outputs/lineae_s_smoke
+```
+
+Normal runs omit the bounded/skip flags. Every output directory receives a resolved config, run manifest, annotation/checkpoint hashes, exact backbone load report, TensorBoard events, JSONL log, atomic latest full-state checkpoint, and validation-sAP10-selected `checkpoint_best.pth`. If `--max_train_steps` stops inside an epoch, the saved diagnostic checkpoint is marked `epoch_complete=False`; it cannot be resumed or promoted as a teacher. Resume always starts after a completed epoch, so it never silently skips the unseen remainder of a bounded probe.
+
+### Exact epoch-boundary resume
+
+`--resume` is a full training-state resume when given `checkpoint.pth` or an interval checkpoint written after a completed epoch. It strict-loads every model parameter/buffer and restores AdamW state, LR scheduler, warm-up scheduler, GradScaler, EMA, best metric/epoch, global optimizer step, progressive-unfreeze position, and Python/NumPy/Torch/CUDA RNG state for each distributed rank. The frozen teacher is not duplicated into every student checkpoint; its qualified artifact path and SHA-256 are bound by the saved config and revalidated. The current checkpoint schema requires every one of those state fields, and a missing or unexpected scheduler/warm-up/scaler/EMA state fails before any model parameter is mutated rather than silently continuing with a fresh component.
+
+Use the identical config, seed, worker/world-size settings, AMP mode, and output directory. For example:
+
+```bash
+uv run --locked python main.py \
+-c configs/lineae/distill/lineae_x.py \
+--coco_path data/wireframe_processed --device cuda --amp \
+--num_workers 8 --seed 42 \
+--resume outputs/lineae_x_distill-seed42/checkpoint.pth \
+--options output_dir=outputs/lineae_x_distill-seed42
+```
+
+Partial-epoch checkpoints (`epoch_complete=False`) are deliberately rejected, because sampler and gradient-accumulation position cannot be reconstructed by skipping unseen samples. Also, a final X-distillation checkpoint from completed epoch 29 already has `start_epoch=30`; with its unchanged 30-epoch config there is no additional work. The current exact-resume contract does not reinterpret or extend a completed LR/KD schedule—choose the intended total epoch budget before starting a matched run.
+
+Full-training configs target one 80--96 GiB GPU with batch 8, no accumulation, and LINEA-style batch multi-scale training; the S probe above remains fixed at 640 and batch 1 by design. CUDA training DataLoaders pin image/target tensors and use configurable worker prefetching for non-blocking host-to-device transfer. Multi-scale choices are filtered so P3/P4/P5 always contain at least `num_queries` encoder tokens. This removes A's invalid 224 input while retaining 256--384 training sizes and all 1100 queries; the actual weighted scale list is stored in checkpoints and run provenance. Training and KD still consume every `num_queries` prediction. Evaluation, postprocessing, ONNX/TensorRT output, and end-to-end Torch timing apply the class-0 top `num_select` contract, so the configured 200--500-output tuning axis is active rather than dead metadata. CUDA training uses fused AdamW, while CPU diagnostics automatically retain the same AdamW equations without requesting the CUDA kernel. DINO activation checkpointing skips redundant RNG snapshots because every checkpointed block is deterministic; RoPE coordinate randomness is generated outside those blocks. A successful full run additionally writes a hash-bound `run_complete.json`, allowing orchestration to distinguish a finished run from an interrupted checkpoint.
+
+All compact and official DINO variants cache the most recent deterministic RoPE sin/cos tensors during evaluation. The cache is keyed by resolution, device, dtype, normalization mode, and the periods-buffer version, and is bypassed for training, tracing, and ONNX export. This accelerates both fixed-shape deployment and repeated online-teacher inference without changing stochastic training or exported graphs. RoPE sin/cos remain at their natural half-head width and are applied directly to the two value halves, rather than duplicating them before every block. This halves their generated and cached tensor footprint while remaining bit-identical to the legacy full-width equation on CPU and CUDA. Full-width inputs remain supported. During Torch `no_grad` inference, compact and official DINO attention also writes those same rotated patch values back into the fresh Q/K projection storage. This removes the per-block rotated-patch and prefix-concatenation tensors; training, tracing, and ONNX export retain the ordinary functional expression.
+
+The shared LINEA decoder also caches its device-local, fixed sinusoidal frequency vector instead of rebuilding it in every decoder layer. Batch expansion for anchors, learned queries, and top-K gather indices uses zero-stride views instead of materialized `repeat` copies. These changes preserve checkpoint keys and apply to training, online KD, Torch inference, and ONNX deployment for every variant. During multi-scale training, deterministic decoder anchors are generated through the legacy CPU math once per feature shape/device and retained in a 16-entry LRU. The 640-base full recipe has 11 unique scales, so normal runs avoid repeated grid construction and host-to-device copies without unbounded cache growth. The hybrid encoder follows the same policy for its deterministic 2D sinusoidal position embeddings. Fixed eval embeddings are non-persistent buffers that move with the model once; dynamic training shapes use a 16-entry device-aware LRU. Neither path adds checkpoint keys. The hybrid encoder also requests no unused attention weights from `nn.MultiheadAttention`, enabling PyTorch's SDPA path for its P5 self-attention. This applies to every backbone family and preserves the existing parameters, masks, residuals, and normalization order. Decoder self-attention uses the same no-weights SDPA path. This is especially important for the 1100 detection queries (plus denoising queries during training) processed at every decoder layer; boolean denoising masks retain their semantics. Line deformable attention keeps its original point and reduction order. In `no_grad` forwards only, including online frozen-teacher inference and deployment, the freshly concatenated sampled-value tensor is weighted in place. Training retains the original out-of-place autograd expression, while inference avoids an equally sized temporary allocation.
+
+## Default augmentation
+
+Training applies the same geometry-aware pipeline to no-KD and KD runs, and the teacher receives the exact already-augmented student image. Line endpoints and line maps are transformed together with the pixels.
+
+| Stage | Default behavior |
+| --- | --- |
+| Flip | Randomly choose the horizontal or vertical flip operator; the selected operator applies with probability 0.5 (25% horizontal, 25% vertical, 50% unchanged overall). |
+| Resize/crop | With probability 0.5, resize directly to the variant input. Otherwise resize to 400, 500, or 600, take a random 384--600 crop with line clipping/filtering, then resize to the variant input. |
+| Color | LINEA `ColorJitter` always varies brightness, contrast, saturation, and hue in random order (`0.4` magnitude each). |
+| Tensor/normalize | Convert to tensor, then use LINEA mean/std for A/F/P/N and ImageNet mean/std for S/M/L/X/XL. |
+| Batch multi-scale | Full recipes resize each assembled batch to a token-safe random size around 75--125% of the base input, with the base size weighted four times. The S P0 probe alone disables this; full S no-KD/KD enables it. |
+| Denoising queries | Training adds 300 model-side denoising queries with line noise scale `1.0` and label-noise ratio `0.5`; validation/inference does not. |
+| Validation/test | Deterministic resize to the configured input followed by the same variant normalization; no random augmentation. |
+
+`use_photometric_distort=True` is an explicit ablation, not a default. It replaces the LINEA `ColorJitter` with the Gazelle-derived image-only photometric distortion at probability 0.5 while leaving line geometry unchanged.
+
+### Why the dataset remains files rather than one Parquet file
+
+One monolithic Parquet file is not recommended for this dataset. The copied tree is only 5,568 files / about 1.89 GB, JPEG decoding and geometry augmentation still dominate CPU work, and a single container would make random multi-worker/DDP reads contend on one file without removing image decode cost. It also makes incremental replacement and recovery coarser and would add PyArrow to the fixed runtime.
+
+Parquet can help when metadata filtering or remote columnar analytics dominates, but that is not this training access pattern. If profiling on network/object storage later shows filesystem metadata as the bottleneck, prefer multiple deterministic shards (Parquet row groups or tar/WebDataset shards), preserve the COCO image/annotation identity in the run manifest, and benchmark throughput and shuffle quality against the current loader before changing the default.
+
+## XL teacher workflow
+
+Train XL supervised first. The recommended single-96-GB-GPU recipe is batch 8, no accumulation, 36 epochs, cosine LR, AMP, eight workers, seed 42, and the progressive schedule documented above:
+
+```bash
+uv run --locked python main.py \
+-c configs/lineae/lineae_xl.py \
+--coco_path data/wireframe_processed --device cuda --amp \
+--num_workers 8 --seed 42 \
+--options output_dir=outputs/lineae_xl-seed42 \
+batch_size_train=8 batch_size_val=8 epochs=36 \
+gradient_accumulation_steps=1
+```
+
+Evaluate both the candidate and the reproduced baseline on both datasets with `tools/evaluate_checkpoint.py`. Then promote only an XL candidate whose recorded Wireframe sAP10 beats the baseline:
+
+```bash
+python tools/qualify_teacher.py \
+--candidate outputs/lineae_xl/checkpoint_best.pth \
+--candidate-metrics outputs/evaluations/lineae_xl.json \
+--baseline-checkpoint outputs/linea_hgnetv2_n/checkpoint_best.pth \
+--baseline-metrics outputs/evaluations/linea_hgnetv2_n.json
+```
+
+This performs strict reload and identical-output checks before writing `ckpts/lineae_xl_teacher.pth`. Distillation configs fail immediately while that qualified checkpoint is absent.
+
+## Distillation
+
+After teacher qualification, choose one X-and-smaller variant and run it individually. Set `STUDENT` to exactly one of `x`, `l`, `m`, `s`, `n`, `p`, `f`, or `a`; this is a one-run command template, not an experiment runner. All eight configs use batch 8, no accumulation, the capacity-aware epoch budget listed above, output-KD weight 1.0, a 1,000-step KD warm-up, and the qualified canonical-640 XL teacher:
+
+```bash
+STUDENT=x
+uv run --locked python main.py \
+-c "configs/lineae/distill/lineae_${STUDENT}.py" \
+--coco_path data/wireframe_processed --device cuda --amp \
+--num_workers 8 --seed 42 \
+--options "output_dir=outputs/lineae_${STUDENT}_distill-seed42" \
+batch_size_train=8 batch_size_val=8 \
+gradient_accumulation_steps=1 distill_weight=1.0 \
+distill_teacher_checkpoint=ckpts/lineae_xl_teacher.pth \
+distill_temperature_start=1.0 distill_temperature_end=4.0 \
+distill_temperature_steps=-1 distill_warmup_steps=1000
+```
+
+Output KD filters and ranks teacher proposals with the same class-0 line score as LINEA evaluation, uses endpoint-swap-invariant Hungarian matching, class-0 Bernoulli logit KL, Smooth-L1 line loss, KD warm-up, and cosine temperature scheduling. Matching Gazelle, temperature rises from 1 to 4 and its cosine horizon is resolved from the full run's actual optimizer-step count rather than a fixed microbatch estimate. HGNet students receive the same augmented pixels with an explicit LINEA-to-ImageNet normalization conversion for the teacher. Following Gazelle's cross-variant path, the frozen teacher evaluates that augmented tensor at its own canonical 640x640 input; normalized line endpoints remain directly comparable. Optional feature KD bilinearly aligns canonical teacher feature maps to each student's current multi-scale feature sizes. For batch training, all non-empty per-image Hungarian cost matrices stay on the GPU until they are flattened and transferred to CPU together. SciPy still solves each original matrix independently, but batch 8 now incurs one synchronization instead of up to eight without changing assignments or losses. The decoder's encoder-proposal top-K uses that same class-0 logit. Wireframe and York contain only category 0; the second retained checkpoint channel is always a focal-loss negative and cannot promote proposals or influence KD matching/loss. LINEAE supervised matching and line L1 are also endpoint-swap invariant, matching the evaluator and KD definition of an undirected segment. The root-owned LINEA control explicitly keeps its original directed matcher/loss, so baseline reproduction is not silently changed. Optional exact-input teacher caching hashes the student's smaller augmented tensor together with a SHA-256 preprocessing fingerprint before normalization conversion and canonical-640 resizing. This remains transform-safe, reduces key traffic for A/F, and lets an all-hit batch skip teacher preprocessing as well as the teacher model. Cache schema 3 prevents reuse of older key semantics.
+
+The gated workflow can be rendered as a non-executing plan:
+
+```bash
+uv run --locked python tools/plan_experiment_matrix.py --stage distillation \
+--output-root outputs/full_matrix_seed42
+```
+
+This command never launches training or evaluation. Execute the listed commands individually on the intended training host, following the recorded dependencies; resume a completed-epoch checkpoint explicitly with `main.py --resume` when needed. The plan compares frozen and progressively unfrozen XL recipes and places KD only after the best valid XL candidate has passed qualification. The default all-stage plan remains the 103-task core comparison. Add `--include-ablations` to opt into the 119-task plan, which also measures XL EMA and photometric recipes plus X intermediate-fusion and feature-KD recipes through the same accuracy and deployment gates.
+
+Only after the direct-XL controls exist, an intermediate-teacher experiment can be planned with `--stage cascade --include-cascade`. It first requires the XL-distilled X checkpoint to beat the matched X no-KD checkpoint, promotes it as `ckpts/lineae_x_teacher.pth`, and then trains L/M/S/N/P/F/A with that qualified X teacher. The cascade-stage plan has 33 tasks; `--stage all` has 146 including all accuracy and deployment measurements. It is never enabled by default.
+
+Coarse per-variant Pareto screening is also opt-in:
+
+```bash
+uv run --locked python tools/plan_experiment_matrix.py --stage tuning --include-tuning \
+--output-root outputs/full_matrix_seed42
+```
+
+For each X/L/M/S/N/P/F/A model this compares the direct-XL recipe with a fixed speed bundle and accuracy bundle. The candidates vary only input size, query/top-K count, and decoder depth while retaining the same XL teacher and training semantics. The 95-task tuning-stage plan produces hash-matched Wireframe/York metrics, CUDA latency/memory reports, and one Pareto report per variant. The core plan remains unchanged and no tuning candidate is retained without measured repeated-seed evidence.
+
+`tools/analyze_repeated_pareto.py` is an optional read-only post-processor for manually scheduled repeated runs. It does not launch or orchestrate training. It requires at least three matched seeds and reports 95% confidence intervals, paired deltas against the direct-XL baseline, and mean/robust Pareto sets.
+
+Online-teacher training cost can be measured without starting a full run using `tools/profile_training.py`. It performs only the requested warm-up and measured real-data optimizer steps in memory, saves no checkpoint, and records phase timings, throughput, and peak CUDA memory. Run it once for a matched no-KD config and once for its KD config, then pass both JSON files to `tools/compare_training_profiles.py`. The comparison tool is read-only and rejects mismatched variants, data, initialization, hardware, precision, seeds, trainable depth, or measured input-size sequences.
+
+## Measurement and deployment
+
+`tools/benchmark.py` first applies LINEA's fused deploy conversion, then records FLOPs/MACs, parameters, peak memory, raw samples, and batch-1 p50/p95 Torch latency. `tools/export_onnx.py` exports the same fused model and performs set-aware ONNX parity after ONNX simplification by default (`--disable-onnxsim` is available for diagnosis). CUDA ORT runs disable TF32 and CPU execution-provider fallback so a nominal GPU run cannot silently become a CPU run. `tools/benchmark_tensorrt.py` builds with TF32 disabled, measures the engine, and gates its actual FP16 outputs against ONNX Runtime using the same query/endpoint-order-invariant comparison. `tools/evaluate_onnx.py` additionally enforces full-dataset sAP5/10/15 parity against the hash-matched PyTorch evaluation before TensorRT benchmarking. `tools/analyze_pareto.py` identifies non-dominated variants, and `tools/generate_model_card.py` turns archived reports into model cards. It requires a hash-matched Pareto report and refuses to label a dominated model as a qualified candidate.
+
+## Licensing
+
+LINEAE is distributed under the root [Apache License 2.0](LICENSE).

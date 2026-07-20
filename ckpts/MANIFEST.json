@@ -1,0 +1,42 @@
+{
+  "PPHGNetV2_B0_stage1.pth": {
+    "sha256": "70a372e8cbc59b34c5da2943261ecb633faf304a58e7e05461a27bd8d8b7f3d1",
+    "tensor_count": 270,
+    "family": "hgnetv2_b0"
+  },
+  "vitt_distill.pt": {
+    "sha256": "2053b865f4e2673fba3f95f7e7e54ad5ee18143885e3ad27eaabb5b3b9919738",
+    "tensor_count": 148,
+    "family": "dinov3_vitt",
+    "embed_dim": 192,
+    "depth": 12
+  },
+  "vittplus_distill.pt": {
+    "sha256": "470b65d9a7704973ae105057f7ec7a4c85f853bc379a7bfbcc49ecc80a17e25b",
+    "tensor_count": 148,
+    "family": "dinov3_vittplus",
+    "embed_dim": 256,
+    "depth": 12
+  },
+  "dinov3_vits16_pretrain_lvd1689m-08c60483.pth": {
+    "sha256": "08c60483bc63c04f533611e34bf70b120eedb7240f469bc16e9e20bf344b941d",
+    "tensor_count": 188,
+    "family": "dinov3_vits16",
+    "embed_dim": 384,
+    "depth": 12
+  },
+  "dinov3_vits16plus_pretrain_lvd1689m-4057cbaa.pth": {
+    "sha256": "4057cbaaad8c16657adb09d6815f28d4164eeba30532fde23f0d17313124caea",
+    "tensor_count": 212,
+    "family": "dinov3_vits16plus",
+    "embed_dim": 384,
+    "depth": 12
+  },
+  "dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth": {
+    "sha256": "73cec8be7427c8655ceced13ce62f6e20a1fa90d1b4d4a550df17a1144081a7c",
+    "tensor_count": 188,
+    "family": "dinov3_vitb16",
+    "embed_dim": 768,
+    "depth": 12
+  }
+}
