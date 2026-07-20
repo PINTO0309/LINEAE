@@ -220,6 +220,7 @@ __marimo__/
 *.pth
 *.pt
 *.onnx
+*.tar.gz
 
 # Local datasets, training artifacts, and exported engines
 data/wireframe*/
