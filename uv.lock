@@ -301,7 +301,7 @@ tensorrt = [
 requires-dist = [
     { name = "addict", specifier = "==2.4.0" },
     { name = "calflops", specifier = "==0.3.2" },
-    { name = "gdown", specifier = ">=6.1.0" },
+    { name = "gdown", specifier = "==6.1.0" },
     { name = "numpy", specifier = "==2.4.6" },
     { name = "onnx", marker = "extra == 'export'", specifier = "==1.22.0" },
     { name = "onnxruntime-gpu", marker = "extra == 'export'", specifier = "==1.26.0" },
