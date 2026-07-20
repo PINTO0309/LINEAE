@@ -17,6 +17,7 @@ dependencies = [
     "transformers==4.57.6",
     "tqdm==4.69.0",
     "yapf==0.43.0",
+    "gdown==6.1.0",
 ]
 
 [project.optional-dependencies]
