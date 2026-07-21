@@ -100,7 +100,7 @@ def test_detector_checkpoints_require_the_opencv_schema():
         )
 
 
-def test_project_has_no_pillow_or_torchvision_runtime_dependency():
+def test_project_image_pipeline_has_no_pillow_or_torchvision_imports():
     root = Path(__file__).resolve().parents[1]
     for path in [*root.glob("**/*.py"), root / "pyproject.toml"]:
         if any(part in {".venv", ".git"} for part in path.parts):
@@ -112,5 +112,14 @@ def test_project_has_no_pillow_or_torchvision_runtime_dependency():
     lock = (root / "uv.lock").read_text(encoding="utf-8").lower()
     assert '"pillow==' not in project
     assert '"torchvision==' not in project
-    assert '\nname = "pillow"\n' not in lock
     assert '\nname = "torchvision"\n' not in lock
+
+
+def test_tensorboard_viewer_and_tensorboardx_writer_are_compatibly_pinned():
+    root = Path(__file__).resolve().parents[1]
+    project = (root / "pyproject.toml").read_text(encoding="utf-8").lower()
+    lock = (root / "uv.lock").read_text(encoding="utf-8").lower()
+    assert '"tensorboard==2.21.0"' in project
+    assert '"tensorboardx==2.6.5"' in project
+    assert '\nname = "tensorboard"\n' in lock
+    assert '\nname = "tensorboardx"\n' in lock

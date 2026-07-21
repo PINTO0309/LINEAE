@@ -127,7 +127,7 @@ uv run --locked python tools/checkpoint_preflight.py
 uv run --locked pytest -q
 ```
 
-Every direct runtime, development, export, and TensorRT dependency is an exact `==` pin in `pyproject.toml`; the same direct versions are used on every supported Python minor. Image processing uses the GUI-enabled `opencv-python==4.13.0.92`; Pillow and torchvision are not runtime or transitive dependencies. `uv.lock` fixes every transitive artifact and its hash; use `--locked` so setup fails instead of silently re-resolving it. Install the separately pinned TensorRT stack on the deployment host with `uv sync --locked --extra tensorrt`.
+Every direct runtime, development, export, and TensorRT dependency is an exact `==` pin in `pyproject.toml`; the same direct versions are used on every supported Python minor. Image processing uses the GUI-enabled `opencv-python==4.13.0.92`, and torchvision is absent. TensorBoard logging continues to use `tensorboardX==2.6.5`, while the compatible `tensorboard==2.21.0` viewer is installed alongside it. TensorBoard requires Pillow as a private transitive UI/image dependency on supported Python versions; no LINEAE training, evaluation, augmentation, rendering, or deployment source imports PIL, so it cannot alter the OpenCV preprocessing contract. `uv.lock` fixes every transitive artifact and its hash; use `--locked` so setup fails instead of silently re-resolving it. Install the separately pinned TensorRT stack on the deployment host with `uv sync --locked --extra tensorrt`.
 
 The preflight validates all six bootstrap files in `ckpts/` by SHA-256, tensor count, width, and depth. It never downloads missing weights.
 
@@ -336,10 +336,8 @@ batch_size_train=8 \
 batch_size_val=64 \
 epochs=36 \
 gradient_accumulation_steps=1 \
-progressive_unfreeze=False \
-backbone_trainable_layers=0 \
-initial_freeze_epochs=0 \
-unfreeze_interval=0 \
+progressive_unfreeze=False backbone_trainable_layers=0 \
+initial_freeze_epochs=0 unfreeze_interval=0 \
 use_checkpoint=False
 ```
 
