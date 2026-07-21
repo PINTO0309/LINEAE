@@ -67,6 +67,42 @@ LAB (`LearnableAffineBlock`) applies a learned scalar scale and bias after an ac
 
 Progressive unfreezing is implemented for every DINO recipe. Epochs 0--4 freeze the DINO core; epoch 5 enables the last two transformer blocks; one earlier block is added every two epochs (depths 3, 4, ..., 11 at epochs 7, 9, ..., 23), and all 12 blocks are trainable from epoch 25 through the recipe's final epoch. The SFP, hybrid encoder, and decoder remain trainable throughout. Optimizer groups include the initially frozen DINO parameters from construction time, so late-unfrozen parameters retain stable optimizer/DDP topology.
 
+Epoch numbers below are zero-based, matching logs and checkpoints. Block indices are also zero-based: partial fine-tuning always enables a suffix from the output side of the 12-block DINO core.
+
+| Epoch range | Trainable blocks | Trainable depth | Newly enabled at range start |
+| --- | --- | --: | --- |
+| 0–4 | none | 0/12 | none; the entire DINO core is frozen |
+| 5–6 | 10–11 | 2/12 | blocks 10 and 11 |
+| 7–8 | 9–11 | 3/12 | block 9 |
+| 9–10 | 8–11 | 4/12 | block 8 |
+| 11–12 | 7–11 | 5/12 | block 7 |
+| 13–14 | 6–11 | 6/12 | block 6 |
+| 15–16 | 5–11 | 7/12 | block 5 |
+| 17–18 | 4–11 | 8/12 | block 4 |
+| 19–20 | 3–11 | 9/12 | block 3 |
+| 21–22 | 2–11 | 10/12 | block 2 |
+| 23–24 | 1–11 | 11/12 | block 1 |
+| 25–final | 0–11 | 12/12 | block 0 and every remaining DINO-core parameter |
+
+For S/M partial stages, the class token is trainable with the selected blocks. For L/X/XL, the class token, storage tokens, and final normalization are also trainable. Patch embedding and all other core parameters remain frozen until epoch 25. SFP, encoder, and decoder parameters are outside this depth count and train from epoch 0.
+
+The final fully unfrozen span differs because each recipe has a different epoch budget:
+
+| Variant/recipe | Config | Total epochs | Fully unfrozen epoch range | Fully unfrozen epochs |
+| --- | --- | --: | --- | --: |
+| S P0 probe | `configs/lineae/lineae_s.py` | 36 | 25–35 | 11 |
+| S no-KD | `configs/lineae/baselines/lineae_s.py` | 45 | 25–44 | 20 |
+| S direct-XL KD | `configs/lineae/distill/lineae_s.py` | 40 | 25–39 | 15 |
+| M no-KD | `configs/lineae/lineae_m.py` | 45 | 25–44 | 20 |
+| M direct-XL KD | `configs/lineae/distill/lineae_m.py` | 40 | 25–39 | 15 |
+| L no-KD | `configs/lineae/lineae_l.py` | 40 | 25–39 | 15 |
+| L direct-XL KD | `configs/lineae/distill/lineae_l.py` | 30 | 25–29 | 5 |
+| X no-KD | `configs/lineae/lineae_x.py` | 35 | 25–34 | 10 |
+| X direct-XL KD | `configs/lineae/distill/lineae_x.py` | 30 | 25–29 | 5 |
+| XL no-KD teacher | `configs/lineae/lineae_xl.py` | 36 | 25–35 | 11 |
+
+X-teacher cascade and tuning configs inherit the corresponding direct-XL KD schedule. The XL EMA and photometric ablations inherit the normal XL schedule. `configs/lineae/ablations/lineae_xl_frozen.py` is the explicit exception: it disables progressive unfreezing and keeps the entire DINO core frozen for all 36 epochs.
+
 ## Setup and preflight
 
 Python 3.11 or newer is required; this lower bound is imposed by the pinned `onnxruntime-gpu==1.26.0` export runtime.
@@ -201,6 +237,21 @@ uv run --locked python main.py \
 batch_size_train=8 batch_size_val=8 epochs=36 \
 gradient_accumulation_steps=1
 ```
+
+To resume an interrupted XL run from the latest completed epoch, use the same config, data path, device topology, AMP mode, worker count, seed, output directory, batch settings, and total epoch budget:
+
+```bash
+uv run --locked python main.py \
+-c configs/lineae/lineae_xl.py \
+--coco_path data/wireframe_processed --device cuda --amp \
+--num_workers 8 --seed 42 \
+--resume outputs/lineae_xl-seed42/checkpoint.pth \
+--options output_dir=outputs/lineae_xl-seed42 \
+batch_size_train=8 batch_size_val=8 epochs=36 \
+gradient_accumulation_steps=1
+```
+
+`checkpoint.pth` is the atomic latest full-state checkpoint and resumes at the epoch after its saved completed epoch. The model, AdamW, cosine scheduler, GradScaler, progressive-unfreeze position, best metric/epoch, global optimizer step, and all RNG states are restored. A checkpoint saved after epoch 35 has already completed the 36-epoch recipe and therefore has no remaining training work; `--resume` does not extend the schedule.
 
 Evaluate both the candidate and the reproduced baseline on both datasets with `tools/evaluate_checkpoint.py`. Then promote only an XL candidate whose recorded Wireframe sAP10 beats the baseline:
 

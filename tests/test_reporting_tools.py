@@ -448,3 +448,15 @@ def test_readme_documents_every_tensorboard_scalar_family():
         "Test/sap15",
     ):
         assert f"`{tag}`" in readme
+
+
+def test_readme_documents_exact_xl_resume_command():
+    readme = Path("README.md").read_text(encoding="utf-8")
+    xl_workflow = readme.split("## XL teacher workflow", 1)[1].split(
+        "## Distillation", 1
+    )[0]
+    assert "-c configs/lineae/lineae_xl.py" in xl_workflow
+    assert "--resume outputs/lineae_xl-seed42/checkpoint.pth" in xl_workflow
+    assert "--options output_dir=outputs/lineae_xl-seed42" in xl_workflow
+    assert "batch_size_train=8 batch_size_val=8 epochs=36" in xl_workflow
+    assert "gradient_accumulation_steps=1" in xl_workflow

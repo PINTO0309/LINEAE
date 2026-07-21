@@ -325,6 +325,57 @@ def test_capacity_aware_epoch_budgets_match_configs_and_readme(variant):
     assert expected_row in _readme_table_rows()
 
 
+def test_readme_documents_complete_dino_unfreeze_schedule():
+    rows = _readme_table_rows()
+    expected = {
+        ("0–4", "none", "0/12", "none; the entire DINO core is frozen"),
+        ("5–6", "10–11", "2/12", "blocks 10 and 11"),
+        ("7–8", "9–11", "3/12", "block 9"),
+        ("9–10", "8–11", "4/12", "block 8"),
+        ("11–12", "7–11", "5/12", "block 7"),
+        ("13–14", "6–11", "6/12", "block 6"),
+        ("15–16", "5–11", "7/12", "block 5"),
+        ("17–18", "4–11", "8/12", "block 4"),
+        ("19–20", "3–11", "9/12", "block 3"),
+        ("21–22", "2–11", "10/12", "block 2"),
+        ("23–24", "1–11", "11/12", "block 1"),
+        (
+            "25–final",
+            "0–11",
+            "12/12",
+            "block 0 and every remaining DINO-core parameter",
+        ),
+    }
+    assert expected <= rows
+
+
+@pytest.mark.parametrize(
+    "label,path",
+    [
+        ("S P0 probe", "configs/lineae/lineae_s.py"),
+        ("S no-KD", "configs/lineae/baselines/lineae_s.py"),
+        ("S direct-XL KD", "configs/lineae/distill/lineae_s.py"),
+        ("M no-KD", "configs/lineae/lineae_m.py"),
+        ("M direct-XL KD", "configs/lineae/distill/lineae_m.py"),
+        ("L no-KD", "configs/lineae/lineae_l.py"),
+        ("L direct-XL KD", "configs/lineae/distill/lineae_l.py"),
+        ("X no-KD", "configs/lineae/lineae_x.py"),
+        ("X direct-XL KD", "configs/lineae/distill/lineae_x.py"),
+        ("XL no-KD teacher", "configs/lineae/lineae_xl.py"),
+    ],
+)
+def test_readme_documents_dino_recipe_fully_unfrozen_horizon(label, path):
+    epochs = SLConfig.fromfile(path).epochs
+    expected_row = (
+        label,
+        f"`{path}`",
+        str(epochs),
+        f"25–{epochs - 1}",
+        str(epochs - 25),
+    )
+    assert expected_row in _readme_table_rows()
+
+
 @pytest.mark.parametrize("variant", ["L", "M", "S", "N", "P", "F", "A"])
 def test_x_teacher_cascade_configs_match_direct_xl_controls(variant):
     lower = variant.lower()
