@@ -12,6 +12,7 @@ https://github.com/user-attachments/assets/008f5a87-0411-4599-b699-45d163121d9c
 | N          | HGNetV2-B0                          |             640 |
 | S / M      | DINOv3 Tiny / Tiny+                 |             640 |
 | L / X / XL | official DINOv3 S/16 / S+/16 / B/16 |             640 |
+| 2XL / 3XL  | official DINOv3 L/16 / H+/16         |             640 |
 
 The authoritative mapping, including exact bootstrap filenames, is in `models/lineae/variants.py`.
 
@@ -30,8 +31,10 @@ The following exact counts are produced from each committed default config with 
 | L       |         23.0 |                6.7 |      29.7 |   94.5 |
 | X       |         30.1 |                8.1 |      38.2 |  121.2 |
 | XL      |         88.4 |                8.1 |      96.5 |  306.3 |
+| 2XL     |        306.8 |                8.1 |     314.9 | 1005.6 |
+| 3XL     |        845.2 |                8.1 |     853.3 | 2731.4 |
 
-`M` is decimal millions (`1 M = 1,000,000` parameters). GFLOPs are the batch-1 forward-operation count reported by the locked `calflops` implementation after `model.deploy()` at each variant's canonical input size: 320 for A, 416 for F, and 640 for P through XL. One multiply-accumulate contributes two FLOPs, with other counted operations added separately. Values are rounded to one decimal place; GFLOPs describe graph complexity rather than measured hardware throughput, and the parameter regression test retains the exact integer counts.
+`M` is decimal millions (`1 M = 1,000,000` parameters). GFLOPs are the batch-1 forward-operation count reported by the locked `calflops` implementation after `model.deploy()` at each variant's canonical input size: 320 for A, 416 for F, and 640 for P through 3XL. One multiply-accumulate contributes two FLOPs, with other counted operations added separately. Values are rounded to one decimal place; GFLOPs describe graph complexity rather than measured hardware throughput, and the parameter regression test retains the exact integer counts. The 2XL/3XL graph is reconstructed and executed on meta tensors for this accounting, avoiding parameter duplication and real multi-teraflop CPU computation while retaining the same module hooks and shapes.
 
 ### A/F/P/N scaling contract
 
@@ -52,7 +55,7 @@ The B0 bootstrap file `ckpts/PPHGNetV2_B0_stage1.pth` remains valid for all four
 
 The defaults are capacity-aware starting estimates, not empirically established optima. Wireframe train contains 5,000 images, so the committed single-GPU batch-8 profile performs 625 optimizer steps per epoch. Every full recipe applies cosine LR decay to `1e-7` over its complete optimizer-step horizon and selects `checkpoint_best.pth` by validation sAP10.
 
-The estimates combine three reference anchors. The original N recipe supplies N's 72 epochs. There are no A/F/P measurements, so their no-KD values conservatively multiply the reference 60/55/50 KD ladder by 1.2, producing 72/66/60. The DINO no-KD values follow the reference 45/45/40/35 trend for S/M/L/X. XL uses 36 rather than the shorter reference value of 20 because LINEAE does not fully unfreeze its 12-block backbone until epoch 23, leaving 13 fully unfrozen epochs for the accuracy-priority teacher. Direct-XL KD uses the 60/55/50/50/40/40/30/30 A-through-X capacity ladder. Its `T=1 -> 4` schedule is resolved over each recipe's actual optimizer-step horizon.
+The estimates combine three reference anchors. The original N recipe supplies N's 72 epochs. There are no A/F/P measurements, so their no-KD values conservatively multiply the reference 60/55/50 KD ladder by 1.2, producing 72/66/60. The DINO no-KD values follow the reference 45/45/40/35 trend for S/M/L/X. XL uses 36 rather than the shorter reference value of 20 because LINEAE does not fully unfreeze its 12-block backbone until epoch 23, leaving 13 fully unfrozen epochs for the accuracy-priority teacher. The accuracy-tier 2XL and 3XL budgets are determined by their deeper progressive schedules: 60 and 72 epochs leave exactly 17 fully unfrozen epochs after all 24 or 32 blocks have been exposed. Direct-XL KD uses the 60/55/50/50/40/40/30/30 A-through-X capacity ladder. Its `T=1 -> 4` schedule is resolved over each recipe's actual optimizer-step horizon.
 
 | Variant | No-distillation config | Epochs | Steps | Direct-XL distillation config | Epochs | Steps |
 | --- | --- | --: | --: | --- | --: | --: |
@@ -65,6 +68,8 @@ The estimates combine three reference anchors. The original N recipe supplies N'
 | L | `configs/lineae/lineae_l.py` | 40 | 25,000 | `configs/lineae/distill/lineae_l.py` | 30 | 18,750 |
 | X | `configs/lineae/lineae_x.py` | 35 | 21,875 | `configs/lineae/distill/lineae_x.py` | 30 | 18,750 |
 | XL | `configs/lineae/lineae_xl.py` | 36 | 22,500 | not applicable (supervised teacher) | — | — |
+| 2XL | `configs/lineae/lineae_2xl.py` | 60 | 37,500 | not applicable (supervised teacher) | — | — |
+| 3XL | `configs/lineae/lineae_3xl.py` | 72 | 45,000 | not applicable (supervised teacher) | — | — |
 
 Steps assume the default one-GPU batch-8 profile; DDP changes steps per rank but not images seen per epoch. These unequal budgets target a strong result for each capacity. For a causal no-KD versus KD comparison at equal compute, override both runs to the same explicit `epochs=<N>` and treat that as a separate matched experiment. `configs/lineae/lineae_s.py` remains the 36-epoch, batch-1, fixed-640 P0 pipeline probe; use the `baselines/` config for full no-KD S training.
 
@@ -79,6 +84,8 @@ LAB (`LearnableAffineBlock`) applies a learned scalar scale and bias after an ac
 | P | enabled | 25 | 50 | all HGNet stages trainable from epoch 0 |
 | N | enabled | 30 | 60 | all HGNet stages trainable from epoch 0 |
 | S / M / L / X / XL | not applicable | 0 | 0 | progressive 12-block DINO schedule |
+| 2XL | not applicable | 0 | 0 | progressive 24-block DINO schedule |
+| 3XL | not applicable | 0 | 0 | progressive 32-block DINO schedule |
 
 Progressive unfreezing is implemented for every DINO recipe and follows the configured GazeLLE-style hold semantics. The last two transformer blocks are trainable during epochs 0--4; epoch 5 adds the next earlier block, one earlier block is then added every two epochs, and all 12 blocks are trainable from epoch 23 through the recipe's final epoch. `initial_freeze_epochs=5` therefore means “hold the initial trainable suffix for five epochs,” not “freeze the entire backbone for five epochs.” The SFP, hybrid encoder, and decoder remain trainable throughout. Optimizer groups include the initially frozen DINO parameters from construction time, so late-unfrozen parameters retain stable optimizer/DDP topology.
 
@@ -100,6 +107,8 @@ Epoch numbers below are zero-based, matching logs and checkpoints. Block indices
 
 For S/M partial stages, the class token is trainable with the selected blocks. For L/X/XL, the class token, storage tokens, and final normalization are also trainable. Patch embedding and all other core parameters remain frozen until epoch 23. SFP, encoder, and decoder parameters are outside this depth count and train from epoch 0.
 
+The larger accuracy variants use the same suffix-unfreezing rule but begin with a proportional trainable suffix. For 2XL, blocks 20–23 are trainable during epochs 0–4, one earlier block is added every two epochs from epoch 5, and all 24 blocks are trainable from epoch 43. For 3XL, blocks 26–31 are initially trainable and all 32 blocks are trainable from epoch 55. Their class token, storage tokens, and final normalization follow the official-backbone rule; patch embedding and the remaining core parameters become trainable only at full depth. Each recipe retains 17 fully unfrozen epochs.
+
 The final fully unfrozen span differs because each recipe has a different epoch budget:
 
 | Variant/recipe | Config | Total epochs | Fully unfrozen epoch range | Fully unfrozen epochs |
@@ -114,6 +123,8 @@ The final fully unfrozen span differs because each recipe has a different epoch 
 | X no-KD | `configs/lineae/lineae_x.py` | 35 | 23–34 | 12 |
 | X direct-XL KD | `configs/lineae/distill/lineae_x.py` | 30 | 23–29 | 7 |
 | XL no-KD teacher | `configs/lineae/lineae_xl.py` | 36 | 23–35 | 13 |
+| 2XL no-KD teacher candidate | `configs/lineae/lineae_2xl.py` | 60 | 43–59 | 17 |
+| 3XL no-KD teacher candidate | `configs/lineae/lineae_3xl.py` | 72 | 55–71 | 17 |
 
 X-teacher cascade and tuning configs inherit the corresponding direct-XL KD schedule. The XL EMA and photometric ablations inherit the normal XL schedule. `configs/lineae/ablations/lineae_xl_frozen.py` is the explicit exception: it disables progressive unfreezing and keeps the entire DINO core frozen for all 36 epochs.
 
@@ -129,7 +140,7 @@ uv run --locked pytest -q
 
 Every direct runtime, development, export, and TensorRT dependency is an exact `==` pin in `pyproject.toml`; the same direct versions are used on every supported Python minor. Image processing uses the GUI-enabled `opencv-python==4.13.0.92`, and torchvision is absent. TensorBoard logging continues to use `tensorboardX==2.6.5`, while the compatible `tensorboard==2.21.0` viewer is installed alongside it. TensorBoard requires Pillow as a private transitive UI/image dependency on supported Python versions; no LINEAE training, evaluation, augmentation, rendering, or deployment source imports PIL, so it cannot alter the OpenCV preprocessing contract. `uv.lock` fixes every transitive artifact and its hash; use `--locked` so setup fails instead of silently re-resolving it. Install the separately pinned TensorRT stack on the deployment host with `uv sync --locked --extra tensorrt`.
 
-The preflight validates all six bootstrap files in `ckpts/` by SHA-256, tensor count, width, and depth. It never downloads missing weights.
+The preflight validates all eight bootstrap files in `ckpts/` by SHA-256, tensor count, width, and depth. It uses mmap-backed FakeTensors for structural inspection, so the 1.2 GB ViT-L/16 and 3.2 GB ViT-H+/16 checkpoints are not materialized in host memory, and it never downloads missing weights.
 
 ## TensorBoard logging
 
@@ -239,7 +250,7 @@ Training applies the same geometry-aware pipeline to no-KD and KD runs, and the 
 | Flip | Randomly choose the horizontal or vertical flip operator; the selected operator applies with probability 0.5 (25% horizontal, 25% vertical, 50% unchanged overall). |
 | Resize/crop | With probability 0.5, resize directly to the variant input. Otherwise resize to 400, 500, or 600, take a random 384--600 crop with line clipping/filtering, then resize to the variant input. Every image resize uses standard OpenCV `INTER_LINEAR`. |
 | Color | The OpenCV implementation of LINEA `ColorJitter` always varies brightness, contrast, saturation, and hue in random order (`0.4` magnitude each). |
-| Tensor/normalize | Convert to tensor, then use LINEA mean/std for A/F/P/N and ImageNet mean/std for S/M/L/X/XL. |
+| Tensor/normalize | Convert to tensor, then use LINEA mean/std for A/F/P/N and ImageNet mean/std for S/M/L/X/XL/2XL/3XL. |
 | Batch multi-scale | Full recipes resize each assembled batch to a token-safe random size around 75--125% of the base input, with the base size weighted four times. The S P0 probe alone disables this; full S no-KD/KD enables it. |
 | Denoising queries | Training adds 300 model-side denoising queries with line noise scale `1.0` and label-noise ratio `0.5`; validation/inference does not. Endpoint noise is additive around each target segment, and a zero line-noise scale is guaranteed to reproduce the same undirected target segment. |
 | Validation/test | Deterministic resize to the configured input followed by the same variant normalization; no random augmentation. |
@@ -355,6 +366,66 @@ python tools/qualify_teacher.py \
 
 This performs strict reload and identical-output checks before writing `ckpts/lineae_xl_teacher.pth`. Distillation configs fail immediately while that qualified checkpoint is absent.
 
+## 2XL / 3XL accuracy workflow
+
+2XL and 3XL are supervised accuracy-tier teacher candidates and do not replace the qualified XL used by existing distillation configs. Both retain XL's 256-channel SFP/head, six decoder layers, 1,100 queries, top-300 deployment selection, canonical 640 input, and 480–800 batch multi-scale range. EMA, intermediate-block fusion, and feature KD remain disabled so the first comparison isolates backbone capacity. On one 96 GB GPU, 2XL uses batch 4 with two-step accumulation and 3XL uses batch 2 with four-step accumulation; both therefore retain effective batch 8 and 625 optimizer updates per epoch.
+
+Run the bounded optimizer smoke before committing to either full schedule. Set `MODEL` to `2xl` or `3xl`; this loads the real bootstrap checkpoint and completes exactly one optimizer update without evaluation, FLOP profiling, or numbered periodic snapshots. It still writes the atomic latest-state `checkpoint.pth` for diagnosis:
+
+```bash
+MODEL=2xl
+uv run --locked python main.py \
+-c "configs/lineae/lineae_${MODEL}.py" \
+--coco_path data/wireframe_processed \
+--device cuda \
+--amp \
+--num_workers 8 \
+--seed 42 \
+--max_train_steps 1 \
+--skip_eval \
+--skip_profile \
+--verify_optimizer_step \
+--options output_dir="outputs/smoke_lineae_${MODEL}-seed42"
+```
+
+The recommended full single-GPU commands use the committed batch, accumulation, epoch, LR, activation-checkpointing, and progressive-unfreeze settings:
+
+```bash
+uv run --locked python main.py \
+-c configs/lineae/lineae_2xl.py \
+--coco_path data/wireframe_processed \
+--device cuda \
+--amp \
+--num_workers 8 \
+--seed 42 \
+--options output_dir=outputs/lineae_2xl-seed42
+
+uv run --locked python main.py \
+-c configs/lineae/lineae_3xl.py \
+--coco_path data/wireframe_processed \
+--device cuda \
+--amp \
+--num_workers 8 \
+--seed 42 \
+--options output_dir=outputs/lineae_3xl-seed42
+```
+
+Resume the atomic full state with the same config and output directory. For 3XL, replace both `2xl` occurrences with `3xl`:
+
+```bash
+uv run --locked python main.py \
+-c configs/lineae/lineae_2xl.py \
+--coco_path data/wireframe_processed \
+--device cuda \
+--amp \
+--num_workers 8 \
+--seed 42 \
+--resume outputs/lineae_2xl-seed42/checkpoint.pth \
+--options output_dir=outputs/lineae_2xl-seed42
+```
+
+Peak VRAM must be checked again after full unfreezing because backbone gradients and AdamW state grow as earlier blocks become trainable. Do not raise the effective batch above eight when tuning physical batch and accumulation. The 3XL state exceeds the practical single-file ONNX protobuf limit; external-data ONNX support is outside this accuracy-training workflow, whose completion artifacts are PyTorch checkpoints and evaluation reports.
+
 ## Distillation
 
 After teacher qualification, choose one X-and-smaller variant and run it individually. Set `STUDENT` to exactly one of `x`, `l`, `m`, `s`, `n`, `p`, `f`, or `a`; this is a one-run command template, not an experiment runner. All eight configs use batch 8, no accumulation, the capacity-aware epoch budget listed above, output-KD weight 1.0, a 1,000-step KD warm-up, and the qualified canonical-640 XL teacher:
@@ -423,7 +494,7 @@ uv run --locked python tools/export_onnx.py \
 
 ### Interactive ONNX demo
 
-`demo_lineae.py` runs a LINEAE ONNX model on one image, an image directory, a video, or a camera index. It uses the fixed input size and top-k dimensions exposed by the ONNX model itself and does not require or inspect an export report. The variant is normally inferred from a filename containing `lineae_<variant>`; specify `--variant` for a custom filename. A/F/P/N use the LINEA mean/std, while S/M/L/X/XL use ImageNet mean/std. All inputs follow the training contract: OpenCV decode with EXIF orientation ignored for still images, BGR-to-RGB conversion, `INTER_LINEAR` resize, RGB/NCHW/float32 conversion, and normalization.
+`demo_lineae.py` runs a LINEAE ONNX model on one image, an image directory, a video, or a camera index. It uses the fixed input size and top-k dimensions exposed by the ONNX model itself and does not require or inspect an export report. The variant is normally inferred from a filename containing `lineae_<variant>`; specify `--variant` for a custom filename. A/F/P/N use the LINEA mean/std, while S/M/L/X/XL/2XL/3XL use ImageNet mean/std. All inputs follow the training contract: OpenCV decode with EXIF orientation ignored for still images, BGR-to-RGB conversion, `INTER_LINEAR` resize, RGB/NCHW/float32 conversion, and normalization.
 
 ```bash
 uv run --locked --extra export python demo_lineae.py \

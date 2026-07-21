@@ -109,7 +109,11 @@ Pareto qualification: `{args.pareto_report}`.
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--variant", required=True, choices=["A", "F", "P", "N", "S", "M", "L", "X", "XL"])
+    parser.add_argument(
+        "--variant",
+        required=True,
+        choices=["A", "F", "P", "N", "S", "M", "L", "X", "XL", "2XL", "3XL"],
+    )
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--evaluation", type=Path, required=True)
     parser.add_argument("--torch-benchmark", type=Path, required=True)

@@ -31,9 +31,21 @@ def build_backbone(args):
             intermediate_layers=getattr(args, "dino_intermediate_layers", ()),
         )
     official_specs = {
-        "dinov3_vits16": dict(embed_dim=384, num_heads=6, ffn_ratio=4.0, swiglu=False),
-        "dinov3_vits16plus": dict(embed_dim=384, num_heads=6, ffn_ratio=6.0, swiglu=True),
-        "dinov3_vitb16": dict(embed_dim=768, num_heads=12, ffn_ratio=4.0, swiglu=False),
+        "dinov3_vits16": dict(
+            embed_dim=384, num_heads=6, ffn_ratio=4.0, swiglu=False, depth=12
+        ),
+        "dinov3_vits16plus": dict(
+            embed_dim=384, num_heads=6, ffn_ratio=6.0, swiglu=True, depth=12
+        ),
+        "dinov3_vitb16": dict(
+            embed_dim=768, num_heads=12, ffn_ratio=4.0, swiglu=False, depth=12
+        ),
+        "dinov3_vitl16": dict(
+            embed_dim=1024, num_heads=16, ffn_ratio=4.0, swiglu=False, depth=24
+        ),
+        "dinov3_vith16plus": dict(
+            embed_dim=1280, num_heads=20, ffn_ratio=6.0, swiglu=True, depth=32
+        ),
     }
     if name in official_specs:
         return OfficialDinoV3Backbone(

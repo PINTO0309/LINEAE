@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
+from torch._subclasses.fake_tensor import FakeTensorMode
 
 from models.lineae.backbones.base import unwrap_state_dict
 
@@ -49,20 +50,29 @@ def _expected_shapes(family: str) -> dict[str, tuple[int, ...]] | None:
 
             width, heads = (192, 3) if family == "dinov3_vitt" else (256, 4)
             model = CompactDinoV3(embed_dim=width, num_heads=heads)
-        elif family in {"dinov3_vits16", "dinov3_vits16plus", "dinov3_vitb16"}:
+        elif family in {
+            "dinov3_vits16",
+            "dinov3_vits16plus",
+            "dinov3_vitb16",
+            "dinov3_vitl16",
+            "dinov3_vith16plus",
+        }:
             from models.lineae.backbones.dinov3 import OfficialDinoV3
 
             specs = {
-                "dinov3_vits16": (384, 6, 4.0, False),
-                "dinov3_vits16plus": (384, 6, 6.0, True),
-                "dinov3_vitb16": (768, 12, 4.0, False),
+                "dinov3_vits16": (384, 6, 4.0, False, 12),
+                "dinov3_vits16plus": (384, 6, 6.0, True, 12),
+                "dinov3_vitb16": (768, 12, 4.0, False, 12),
+                "dinov3_vitl16": (1024, 16, 4.0, False, 24),
+                "dinov3_vith16plus": (1280, 20, 6.0, True, 32),
             }
-            width, heads, ratio, swiglu = specs[family]
+            width, heads, ratio, swiglu, depth = specs[family]
             model = OfficialDinoV3(
                 embed_dim=width,
                 num_heads=heads,
                 ffn_ratio=ratio,
                 swiglu=swiglu,
+                depth=depth,
             )
         else:
             return None
@@ -81,7 +91,14 @@ def verify_checkpoint(path: Path, specification: dict[str, Any]) -> dict[str, An
         raise ValueError(
             f"SHA-256 mismatch for {path.name}: expected {specification['sha256']}, got {actual_hash}"
         )
-    state = unwrap_state_dict(torch.load(path, map_location="cpu", weights_only=True))
+    with FakeTensorMode():
+        checkpoint = torch.load(
+            path,
+            map_location="cpu",
+            weights_only=True,
+            mmap=True,
+        )
+    state = unwrap_state_dict(checkpoint)
     if len(state) != specification["tensor_count"]:
         raise ValueError(
             f"tensor-count mismatch for {path.name}: expected {specification['tensor_count']}, "

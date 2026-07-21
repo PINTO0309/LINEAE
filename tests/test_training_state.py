@@ -46,6 +46,8 @@ class TinyModel(nn.Module):
         "configs/lineae/lineae_n.py",
         "configs/lineae/distill/lineae_n.py",
         "configs/lineae/lineae_xl.py",
+        "configs/lineae/lineae_2xl.py",
+        "configs/lineae/lineae_3xl.py",
     ],
 )
 def test_periodic_checkpoint_snapshots_are_disabled_by_default(config_path):
@@ -711,6 +713,37 @@ def test_all_dino_training_recipes_reach_full_unfreeze_before_training_ends():
         assert schedule[5:7] == [3] * 2
         assert config.epochs > 23
         assert schedule[23:] == [12] * (config.epochs - 23)
+
+
+@pytest.mark.parametrize(
+    "path,total_blocks,initial_depth,fully_unfrozen_epoch",
+    [
+        ("configs/lineae/lineae_2xl.py", 24, 4, 43),
+        ("configs/lineae/lineae_3xl.py", 32, 6, 55),
+    ],
+)
+def test_large_accuracy_variants_retain_seventeen_fully_unfrozen_epochs(
+    path,
+    total_blocks,
+    initial_depth,
+    fully_unfrozen_epoch,
+):
+    config = SLConfig.fromfile(path)
+    schedule = [
+        trainable_depth_for_epoch(
+            epoch=epoch,
+            total_blocks=total_blocks,
+            initial_depth=config.backbone_trainable_layers,
+            initial_freeze_epochs=config.initial_freeze_epochs,
+            unfreeze_interval=config.unfreeze_interval,
+            progressive=config.progressive_unfreeze,
+        )
+        for epoch in range(config.epochs)
+    ]
+
+    assert schedule[:5] == [initial_depth] * 5
+    assert schedule[fully_unfrozen_epoch - 1] == total_blocks - 1
+    assert schedule[fully_unfrozen_epoch:] == [total_blocks] * 17
 
 
 def test_ema_updates_resume_and_selects_inference_weights(tmp_path):

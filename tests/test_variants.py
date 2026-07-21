@@ -12,6 +12,7 @@ from models.lineae.tuning import TUNING_CANDIDATES
 from models.lineae.variants import VARIANTS, validate_variant_config
 from util.slconfig import SLConfig
 from util.experiment import config_fingerprint, sha256_file
+from util.profiler import stats as complexity_stats
 
 
 DEPLOY_PARAMETER_COUNTS = {
@@ -24,6 +25,8 @@ DEPLOY_PARAMETER_COUNTS = {
     "L": (22_979_200, 6_677_228, 29_656_428),
     "X": (30_075_520, 8_083_770, 38_159_290),
     "XL": (88_423_936, 8_083_770, 96_507_706),
+    "2XL": (306_825_984, 8_083_770, 314_909_754),
+    "3XL": (845_222_912, 8_083_770, 853_306_682),
 }
 
 DEPLOY_GFLOPS = {
@@ -36,7 +39,14 @@ DEPLOY_GFLOPS = {
     "L": 94.5,
     "X": 121.2,
     "XL": 306.3,
+    "2XL": 1005.6,
+    "3XL": 2731.4,
 }
+
+LARGE_VARIANTS = ("2XL", "3XL")
+RUNTIME_TEST_VARIANTS = tuple(
+    variant for variant in VARIANTS if variant not in LARGE_VARIANTS
+)
 
 LAB_MODULE_COUNTS = {"A": 20, "F": 20, "P": 25, "N": 30}
 
@@ -50,6 +60,8 @@ NO_KD_EPOCHS = {
     "L": 40,
     "X": 35,
     "XL": 36,
+    "2XL": 60,
+    "3XL": 72,
 }
 
 DISTILL_EPOCHS = {
@@ -97,12 +109,19 @@ def test_variant_registry_prevents_silent_preprocessing_and_shape_drift():
 def test_readme_deploy_parameter_and_lab_inventory_matches_models(variant):
     config = SLConfig.fromfile(f"configs/lineae/lineae_{variant.lower()}.py")
     config.pretrained = False
-    model, _ = create(config, "modelname")
-    model.deploy()
-
-    backbone = sum(parameter.numel() for parameter in model.backbone.parameters())
-    total = sum(parameter.numel() for parameter in model.parameters())
-    after_backbone = total - backbone
+    if variant in LARGE_VARIANTS:
+        with torch.device("meta"):
+            model, _ = create(config, "modelname")
+            model.deploy()
+        backbone = sum(parameter.numel() for parameter in model.backbone.parameters())
+        total = sum(parameter.numel() for parameter in model.parameters())
+        after_backbone = total - backbone
+    else:
+        model, _ = create(config, "modelname")
+        model.deploy()
+        backbone = sum(parameter.numel() for parameter in model.backbone.parameters())
+        total = sum(parameter.numel() for parameter in model.parameters())
+        after_backbone = total - backbone
     assert (backbone, after_backbone, total) == DEPLOY_PARAMETER_COUNTS[variant]
 
     lab_modules = sum(
@@ -119,6 +138,30 @@ def test_readme_deploy_parameter_and_lab_inventory_matches_models(variant):
         f"{DEPLOY_GFLOPS[variant]:.1f}",
     )
     assert expected_row in _readme_table_rows()
+
+
+@pytest.mark.parametrize(
+    "variant,expected_flops,expected_macs",
+    [
+        ("2XL", "1.0056 TFLOPS", "502.431 GMACs"),
+        ("3XL", "2.7314 TFLOPS", "1.3652 TMACs"),
+    ],
+)
+def test_large_variant_complexity_uses_meta_graph(
+    variant,
+    expected_flops,
+    expected_macs,
+):
+    config = SLConfig.fromfile(f"configs/lineae/lineae_{variant.lower()}.py")
+    config.pretrained = False
+    with torch.device("meta"):
+        model, _ = create(config, "modelname")
+
+    complexity = complexity_stats(model, config)
+
+    assert complexity["flops"] == expected_flops
+    assert complexity["macs"] == expected_macs
+    assert complexity["params"] == DEPLOY_PARAMETER_COUNTS[variant][2]
 
 
 def test_afpn_deploy_parameter_counts_are_strictly_monotonic():
@@ -142,7 +185,7 @@ def test_afpn_query_and_decoder_scale_matches_latency_contract():
     assert [config.eval_idx for config in configs] == [1, 2, 2, 2]
 
 
-@pytest.mark.parametrize("variant", list(VARIANTS))
+@pytest.mark.parametrize("variant", RUNTIME_TEST_VARIANTS)
 def test_every_variant_runs_the_shared_detector_and_selection_contract(variant):
     config = SLConfig.fromfile(f"configs/lineae/lineae_{variant.lower()}.py")
     config.pretrained = False
@@ -165,7 +208,7 @@ def test_every_variant_runs_the_shared_detector_and_selection_contract(variant):
     assert selected[0]["lines"].shape == (10, 4)
 
 
-@pytest.mark.parametrize("variant", list(VARIANTS))
+@pytest.mark.parametrize("variant", RUNTIME_TEST_VARIANTS)
 def test_every_variant_runs_a_finite_denoising_training_update(variant):
     torch.manual_seed(47)
     config = SLConfig.fromfile(f"configs/lineae/lineae_{variant.lower()}.py")
@@ -206,7 +249,7 @@ def test_every_variant_runs_a_finite_denoising_training_update(variant):
     assert not torch.equal(before, tracked.detach())
 
 
-@pytest.mark.parametrize("variant", list(VARIANTS))
+@pytest.mark.parametrize("variant", RUNTIME_TEST_VARIANTS)
 def test_every_variant_preserves_detector_and_topk_outputs_after_fused_deploy(variant):
     torch.manual_seed(89)
     config = SLConfig.fromfile(f"configs/lineae/lineae_{variant.lower()}.py")
@@ -312,6 +355,49 @@ def test_full_lineae_recipes_restore_linea_multiscale_training(variant):
     assert config.optimizer_fused is True
 
 
+@pytest.mark.parametrize(
+    "variant,batch_size,accumulation,epochs,initial_depth",
+    [("2XL", 4, 2, 60, 4), ("3XL", 2, 4, 72, 6)],
+)
+def test_accuracy_tier_large_recipes_keep_effective_batch_and_xl_head(
+    variant,
+    batch_size,
+    accumulation,
+    epochs,
+    initial_depth,
+):
+    config = SLConfig.fromfile(f"configs/lineae/lineae_{variant.lower()}.py")
+    assert config.training_profile == "single_gpu_96gb_accuracy"
+    assert config.eval_spatial_size == (640, 640)
+    assert config.multi_scale_train is True
+    assert config.use_checkpoint is True
+    assert config.use_ema is False
+    assert config.dino_intermediate_layers == []
+    assert config.distill_weight == 0.0
+    assert config.distill_feature_weight == 0.0
+    assert config.batch_size_train == batch_size
+    assert config.gradient_accumulation_steps == accumulation
+    assert batch_size * accumulation == 8
+    assert config.recipe_reference_effective_batch_size == 8
+    assert config.scheduler_step_unit == "optimizer"
+    assert config.lr == 2e-4
+    assert config.lr_scheduler == "cosine"
+    assert config.min_lr == 1e-7
+    assert config.use_warmup is False
+    assert config.model_parameters[0]["lr"] == 1e-5
+    assert config.model_parameters[1]["lr"] == 1e-5
+    assert config.epochs == epochs
+    assert config.backbone_trainable_layers == initial_depth
+    assert config.initial_freeze_epochs == 5
+    assert config.unfreeze_interval == 2
+    assert config.in_channels_encoder == [256, 256, 256]
+    assert config.hidden_dim == 256
+    assert config.dec_layers == 6
+    assert config.eval_idx == 5
+    assert config.num_queries == 1100
+    assert config.num_select == 300
+
+
 @pytest.mark.parametrize("variant", ["A", "F", "P", "N", "M", "L", "X"])
 def test_no_kd_and_kd_training_step_semantics_match(variant):
     baseline = SLConfig.fromfile(f"configs/lineae/lineae_{variant.lower()}.py")
@@ -341,9 +427,9 @@ def test_capacity_aware_epoch_budgets_match_configs_and_readme(variant):
     assert no_kd_epochs == NO_KD_EPOCHS[variant]
 
     no_kd_steps = f"{no_kd_epochs * 625:,}"
-    if variant == "XL":
+    if variant in {"XL", "2XL", "3XL"}:
         expected_row = (
-            "XL",
+            variant,
             f"`{no_kd_path}`",
             str(no_kd_epochs),
             no_kd_steps,
@@ -413,6 +499,29 @@ def test_readme_documents_dino_recipe_fully_unfrozen_horizon(label, path):
         str(epochs),
         f"23–{epochs - 1}",
         str(epochs - 23),
+    )
+    assert expected_row in _readme_table_rows()
+
+
+@pytest.mark.parametrize(
+    "label,path,fully_unfrozen_epoch",
+    [
+        ("2XL no-KD teacher candidate", "configs/lineae/lineae_2xl.py", 43),
+        ("3XL no-KD teacher candidate", "configs/lineae/lineae_3xl.py", 55),
+    ],
+)
+def test_readme_documents_large_dino_fully_unfrozen_horizon(
+    label,
+    path,
+    fully_unfrozen_epoch,
+):
+    epochs = SLConfig.fromfile(path).epochs
+    expected_row = (
+        label,
+        f"`{path}`",
+        str(epochs),
+        f"{fully_unfrozen_epoch}–{epochs - 1}",
+        str(epochs - fully_unfrozen_epoch),
     )
     assert expected_row in _readme_table_rows()
 

@@ -71,6 +71,11 @@ def weighting_function(reg_max, up, reg_scale, deploy=False):
         Tensor: Sequence of Weighting Function.
     """
     if deploy:
+        if up.device.type == "meta":
+            # Deployment FLOP accounting for very large variants runs the
+            # complete graph on meta tensors. Values do not affect graph
+            # structure; only the reg_max + 1 lookup-table shape is required.
+            return torch.empty(reg_max + 1, dtype=up.dtype, device=up.device)
         upper_bound1 = (abs(up[0]) * abs(reg_scale)).item()
         upper_bound2 = (abs(up[0]) * abs(reg_scale) * 2).item()
         step = (upper_bound1 + 1) ** (2 / (reg_max - 2))

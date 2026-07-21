@@ -486,7 +486,7 @@ class OfficialBlock(nn.Module):
 
 
 class OfficialDinoV3(nn.Module):
-    """Local minimal DINOv3 ViT-S/S+/B implementation for official checkpoints."""
+    """Local minimal DINOv3 ViT implementation for official checkpoints."""
 
     def __init__(
         self,
@@ -678,6 +678,7 @@ class OfficialDinoV3Backbone(LINEAEBackbone):
         ffn_ratio: float,
         swiglu: bool,
         weights_path: str | Path | None,
+        depth: int = 12,
         pyramid_channels: int | None = None,
         trainable_depth: int = 2,
         use_checkpoint: bool = False,
@@ -689,6 +690,7 @@ class OfficialDinoV3Backbone(LINEAEBackbone):
             num_heads=num_heads,
             ffn_ratio=ffn_ratio,
             swiglu=swiglu,
+            depth=depth,
             use_checkpoint=use_checkpoint,
         )
         if weights_path is not None:

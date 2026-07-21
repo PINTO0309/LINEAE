@@ -3,6 +3,7 @@ from types import MethodType
 
 import pytest
 import torch
+from torch._subclasses.fake_tensor import FakeTensorMode
 
 import models.lineae.backbones.dinov3 as dinov3_module
 from models.lineae.backbones.dinov3 import (
@@ -460,3 +461,65 @@ def test_official_dinov3_checkpoints_load_strictly(
         (1, 192, 4, 4),
         (1, 192, 2, 2),
     ]
+
+
+@pytest.mark.parametrize(
+    "filename,embed_dim,num_heads,ffn_ratio,swiglu,depth,tensor_count",
+    [
+        (
+            "dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth",
+            1024,
+            16,
+            4.0,
+            False,
+            24,
+            368,
+        ),
+        (
+            "dinov3_vith16plus_pretrain_lvd1689m-7c1da9a5.pth",
+            1280,
+            20,
+            6.0,
+            True,
+            32,
+            552,
+        ),
+    ],
+)
+def test_large_official_dinov3_checkpoint_shapes_match_meta_architecture(
+    filename,
+    embed_dim,
+    num_heads,
+    ffn_ratio,
+    swiglu,
+    depth,
+    tensor_count,
+):
+    with FakeTensorMode():
+        state = torch.load(
+            f"ckpts/{filename}",
+            map_location="cpu",
+            weights_only=True,
+            mmap=True,
+        )
+    with torch.device("meta"):
+        core = OfficialDinoV3(
+            embed_dim=embed_dim,
+            num_heads=num_heads,
+            ffn_ratio=ffn_ratio,
+            swiglu=swiglu,
+            depth=depth,
+        )
+
+    expected_shapes = {
+        key: tuple(value.shape) for key, value in core.state_dict().items()
+    }
+    actual_shapes = {key: tuple(value.shape) for key, value in state.items()}
+    assert len(state) == tensor_count
+    assert actual_shapes == expected_shapes
+    assert core.rope_embed.head_dim == 64
+    assert len(core.blocks) == depth
+    if swiglu:
+        assert core.blocks[0].mlp.w1.out_features == int(embed_dim * ffn_ratio * 2 / 3)
+    else:
+        assert core.blocks[0].mlp.fc1.out_features == int(embed_dim * ffn_ratio)
