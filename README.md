@@ -450,3 +450,17 @@ The script applies sigmoid to class-0 logits, converts normalized `[x1,y1,x2,y2]
 ## Licensing
 
 LINEAE is distributed under the root [Apache License 2.0](LICENSE).
+
+## Cited / Acknowledgement
+
+```bibtex
+@misc{janampa2025linea,
+  title={LINEA: Fast and Accurate Line Detection Using Scalable Transformers},
+  author={Sebastian Janampa and Marios Pattichis},
+  year={2025},
+  eprint={2505.16264},
+  archivePrefix={arXiv},
+  primaryClass={cs.CV},
+  url={https://arxiv.org/abs/2505.16264},
+}
+```
