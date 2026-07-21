@@ -447,11 +447,21 @@ def test_qualified_teacher_artifact_binds_canonical_resolved_config():
     config = SLConfig.fromfile(str(config_path))
     baseline_config = SLConfig.fromfile(str(baseline_config_path))
     source_hash = "c" * 64
-    metrics = {"sap5": 49.0, "sap10": 50.0, "sap15": 51.0}
+    metrics = {
+        "sap5": 49.0,
+        "sap10": 50.0,
+        "sap15": 51.0,
+        "deploy_sap5": 49.0,
+        "deploy_sap10": 50.0,
+        "deploy_sap15": 51.0,
+    }
     candidate = {
-        "format": "lineae_evaluation_v1",
+        "format": "lineae_evaluation_v2",
         "checkpoint_sha256": source_hash,
         "config": str(config_path.resolve()),
+        "num_queries": 1100,
+        "num_select": 300,
+        "sap_protocol": "official_all_queries_and_deployment_topk",
         "datasets": {
             dataset: {
                 **metrics,
@@ -462,14 +472,20 @@ def test_qualified_teacher_artifact_binds_canonical_resolved_config():
         },
     }
     baseline = {
-        "format": "lineae_evaluation_v1",
+        "format": "lineae_evaluation_v2",
         "checkpoint_sha256": "b" * 64,
         "config": str(baseline_config_path.resolve()),
+        "num_queries": 1100,
+        "num_select": 300,
+        "sap_protocol": "official_all_queries_and_deployment_topk",
         "datasets": {
             dataset: {
                 "sap5": 39.0,
                 "sap10": 40.0,
                 "sap15": 41.0,
+                "deploy_sap5": 39.0,
+                "deploy_sap10": 40.0,
+                "deploy_sap15": 41.0,
                 "annotation_sha256": "a" * 64,
                 "samples": 10,
             }

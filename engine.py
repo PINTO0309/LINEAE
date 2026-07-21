@@ -375,11 +375,11 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
 @torch.no_grad()
 def evaluate(model, criterion, postprocessors, data_loader, device, output_dir, args=None):
-    from datasets import LineEvaluator
+    from datasets import DualLineEvaluator
 
     model.eval()
     criterion.eval()
-    evaluator = LineEvaluator(max_predictions=getattr(args, 'num_select', None))
+    evaluator = DualLineEvaluator(deploy_max_predictions=args.num_select)
 
     metric_logger = utils.MetricLogger(delimiter="  ")
    

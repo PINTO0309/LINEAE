@@ -20,6 +20,9 @@ def _datasets():
             "sap5": 50.0,
             "sap10": 51.0,
             "sap15": 52.0,
+            "deploy_sap5": 49.0,
+            "deploy_sap10": 50.0,
+            "deploy_sap15": 51.0,
         }
         for name in ("wireframe", "york")
     }
@@ -27,9 +30,12 @@ def _datasets():
 
 def test_evaluation_schema_rejects_nonfinite_decision_metric():
     report = {
-        "format": "lineae_evaluation_v1",
+        "format": "lineae_evaluation_v2",
         "config": "/test/config.py",
         "checkpoint_sha256": "b" * 64,
+        "num_queries": 1100,
+        "num_select": 300,
+        "sap_protocol": "official_all_queries_and_deployment_topk",
         "datasets": _datasets(),
     }
     validate_evaluation_report(report)
@@ -143,11 +149,14 @@ def test_onnx_and_tensorrt_schemas_bind_runtime_versions_and_latency():
 
 def test_onnx_ap_schema_binds_torch_report_and_pure_cuda_execution():
     deltas = {
-        dataset: {metric: 0.01 for metric in ("sap5", "sap10", "sap15")}
+        dataset: {
+            metric: 0.01
+            for metric in ("deploy_sap5", "deploy_sap10", "deploy_sap15")
+        }
         for dataset in ("wireframe", "york")
     }
     report = {
-        "format": "lineae_onnx_evaluation_v1",
+        "format": "lineae_onnx_evaluation_v2",
         "config": "/test/config.py",
         "checkpoint_sha256": "a" * 64,
         "onnx_sha256": "b" * 64,
@@ -155,7 +164,18 @@ def test_onnx_ap_schema_binds_torch_report_and_pure_cuda_execution():
         "providers": ["CUDAExecutionProvider", "CPUExecutionProvider"],
         "provider_options": {"CUDAExecutionProvider": {"use_tf32": "0"}},
         "cpu_ep_fallback_disabled": True,
-        "datasets": _datasets(),
+        "num_select": 300,
+        "sap_protocol": "deployment_topk",
+        "datasets": {
+            name: {
+                "annotation_sha256": "a" * 64,
+                "samples": 10,
+                "deploy_sap5": 49.0,
+                "deploy_sap10": 50.0,
+                "deploy_sap15": 51.0,
+            }
+            for name in ("wireframe", "york")
+        },
         "ap_parity": {
             "tolerance": 0.05,
             "maximum_delta": 0.01,

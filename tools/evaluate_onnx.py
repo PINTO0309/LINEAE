@@ -49,7 +49,7 @@ def compare_ap(onnx_report: dict, torch_report: dict, tolerance: float) -> dict:
             if actual.get(field) != expected.get(field):
                 raise ValueError(f"ONNX/PyTorch {dataset}.{field} mismatch")
         deltas[dataset] = {}
-        for metric in ("sap5", "sap10", "sap15"):
+        for metric in ("deploy_sap5", "deploy_sap10", "deploy_sap15"):
             actual_value = float(actual[metric])
             expected_value = float(expected[metric])
             if not math.isfinite(actual_value) or not math.isfinite(expected_value):
@@ -128,16 +128,20 @@ def evaluate(args) -> dict:
             "root": str(dataset_root.resolve()),
             "annotation_sha256": sha256_file(annotation),
             "samples": len(dataset),
-            **evaluator.sap_results,
+            **{
+                f"deploy_{metric}": value
+                for metric, value in evaluator.sap_results.items()
+            },
         }
 
     report = {
-        "format": "lineae_onnx_evaluation_v1",
+        "format": "lineae_onnx_evaluation_v2",
         "config": expected_config,
         "onnx": str(onnx_path.resolve()),
         "onnx_sha256": sha256_file(onnx_path),
         "checkpoint_sha256": export_report.get("checkpoint_sha256"),
         "num_select": int(config.num_select),
+        "sap_protocol": "deployment_topk",
         "available_providers": available_providers,
         "requested_providers": requested_providers,
         "provider_options": provider_options,

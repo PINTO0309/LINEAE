@@ -25,6 +25,7 @@ from util.training_state import (
     validate_resume_checkpoint,
 )
 from warmup import LinearWarmup
+from util.training_schedule import build_lr_scheduler
 
 
 class TinyModel(nn.Module):
@@ -135,6 +136,76 @@ def test_resume_matches_uninterrupted_next_step(tmp_path):
     for expected, actual in zip(model.parameters(), resumed.parameters()):
         assert torch.equal(expected, actual)
     assert scheduler.state_dict() == resumed_scheduler.state_dict()
+
+
+def test_optimizer_cosine_warmup_is_contained_in_total_step_horizon():
+    parameter = torch.nn.Parameter(torch.tensor(1.0))
+    optimizer = torch.optim.SGD([parameter], lr=1.0)
+    args = SimpleNamespace(
+        lr_scheduler="cosine",
+        scheduler_step_unit="optimizer",
+        optimizer_steps_per_epoch=5,
+        epochs=2,
+        min_lr=0.0,
+        use_warmup=True,
+        warmup_iters=3,
+    )
+    scheduler = build_lr_scheduler(args, optimizer)
+    warmup = LinearWarmup(scheduler, warmup_duration=args.warmup_iters)
+    used_lrs = []
+
+    for _ in range(10):
+        used_lrs.append(optimizer.param_groups[0]["lr"])
+        optimizer.step()
+        warmup.step()
+        if warmup.finished():
+            scheduler.step()
+
+    assert scheduler.T_max == 8
+    assert scheduler.last_epoch == 8
+    assert used_lrs[:3] == pytest.approx([1 / 3, 2 / 3, 1.0])
+    assert optimizer.param_groups[0]["lr"] == pytest.approx(0.0)
+    assert args.lr_scheduler_total_units_resolved == 10
+    assert args.lr_scheduler_warmup_units_resolved == 3
+    assert args.lr_scheduler_post_warmup_units_resolved == 8
+
+
+def test_optimizer_cosine_without_warmup_keeps_original_horizon():
+    parameter = torch.nn.Parameter(torch.tensor(1.0))
+    optimizer = torch.optim.SGD([parameter], lr=1.0)
+    args = SimpleNamespace(
+        lr_scheduler="cosine",
+        scheduler_step_unit="optimizer",
+        optimizer_steps_per_epoch=5,
+        epochs=2,
+        min_lr=0.0,
+        use_warmup=False,
+        warmup_iters=3,
+    )
+
+    scheduler = build_lr_scheduler(args, optimizer)
+
+    assert scheduler.T_max == 10
+    assert args.lr_scheduler_total_units_resolved == 10
+    assert args.lr_scheduler_warmup_units_resolved == 0
+    assert args.lr_scheduler_post_warmup_units_resolved == 10
+
+
+def test_optimizer_warmup_must_fit_inside_total_horizon():
+    parameter = torch.nn.Parameter(torch.tensor(1.0))
+    optimizer = torch.optim.SGD([parameter], lr=1.0)
+    args = SimpleNamespace(
+        lr_scheduler="cosine",
+        scheduler_step_unit="optimizer",
+        optimizer_steps_per_epoch=5,
+        epochs=2,
+        min_lr=0.0,
+        use_warmup=True,
+        warmup_iters=10,
+    )
+
+    with pytest.raises(ValueError, match="smaller than the total optimizer-step horizon"):
+        build_lr_scheduler(args, optimizer)
 
 
 def _complete_optional_state_checkpoint(tmp_path):
@@ -505,6 +576,7 @@ def test_resume_validation_covers_training_semantics_and_normalizes_sequences():
         distill_temperature_steps_resolved=99,
         distill_temperature_end=1.0,
         ema_decay=0.9997,
+        sap_evaluation_protocol="official_all_queries_and_deployment_topk",
     )
     checkpoint = _resume_checkpoint_stub(
         config={
@@ -529,6 +601,7 @@ def test_resume_validation_covers_training_semantics_and_normalizes_sequences():
     args.distill_temperature_end = 2.0
     with pytest.raises(ValueError, match="distill_temperature_end"):
         validate_resume_checkpoint(checkpoint, args)
+
 
 
 @pytest.mark.parametrize(

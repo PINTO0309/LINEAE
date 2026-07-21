@@ -102,7 +102,11 @@ def _config(report: Mapping, expected: str | None = None) -> str:
     return config
 
 
-def _datasets(report: Mapping, required: Iterable[str]) -> None:
+def _datasets(
+    report: Mapping,
+    required: Iterable[str],
+    metrics: Iterable[str] = ("sap5", "sap10", "sap15"),
+) -> None:
     datasets = _mapping(report.get("datasets"), "datasets")
     for name in required:
         dataset = _mapping(datasets.get(name), f"datasets.{name}")
@@ -110,7 +114,7 @@ def _datasets(report: Mapping, required: Iterable[str]) -> None:
         samples = dataset.get("samples")
         if not isinstance(samples, int) or isinstance(samples, bool) or samples <= 0:
             raise ValueError(f"datasets.{name}.samples must be a positive integer")
-        for metric in ("sap5", "sap10", "sap15"):
+        for metric in metrics:
             _number(dataset.get(metric), f"datasets.{name}.{metric}", minimum=0, maximum=100)
 
 
@@ -122,11 +126,28 @@ def validate_evaluation_report(
     required_datasets: Iterable[str] = ("wireframe", "york"),
 ) -> None:
     report = _mapping(report, "evaluation report")
-    if report.get("format") != "lineae_evaluation_v1":
+    if report.get("format") != "lineae_evaluation_v2":
         raise ValueError("unsupported evaluation report format")
     _checkpoint(report, expected_checkpoint)
     _config(report, expected_config)
-    _datasets(report, required_datasets)
+    num_queries = _positive_integer(report.get("num_queries"), "num_queries")
+    num_select = _positive_integer(report.get("num_select"), "num_select")
+    if num_select > num_queries:
+        raise ValueError("num_select must not exceed num_queries")
+    if report.get("sap_protocol") != "official_all_queries_and_deployment_topk":
+        raise ValueError("evaluation report has an unsupported sAP protocol")
+    _datasets(
+        report,
+        required_datasets,
+        metrics=(
+            "sap5",
+            "sap10",
+            "sap15",
+            "deploy_sap5",
+            "deploy_sap10",
+            "deploy_sap15",
+        ),
+    )
 
 
 def validate_torch_benchmark_report(
@@ -250,7 +271,7 @@ def validate_onnx_evaluation_report(
     require_cuda: bool = False,
 ) -> None:
     report = _mapping(report, "ONNX evaluation report")
-    if report.get("format") != "lineae_onnx_evaluation_v1":
+    if report.get("format") != "lineae_onnx_evaluation_v2":
         raise ValueError("unsupported ONNX evaluation report format")
     _checkpoint(report, expected_checkpoint)
     _config(report, expected_config)
@@ -274,7 +295,11 @@ def validate_onnx_evaluation_report(
         "CUDAExecutionProvider", {}
     ).get("use_tf32") != "0":
         raise ValueError("ONNX CUDA evaluation did not disable TF32")
-    _datasets(report, ("wireframe", "york"))
+    _positive_integer(report.get("num_select"), "num_select")
+    if report.get("sap_protocol") != "deployment_topk":
+        raise ValueError("ONNX evaluation report has an unsupported sAP protocol")
+    deploy_metrics = ("deploy_sap5", "deploy_sap10", "deploy_sap15")
+    _datasets(report, ("wireframe", "york"), metrics=deploy_metrics)
     parity = _mapping(report.get("ap_parity"), "ap_parity")
     tolerance = _number(parity.get("tolerance"), "ap_parity.tolerance", minimum=0)
     maximum = _number(parity.get("maximum_delta"), "ap_parity.maximum_delta", minimum=0)
@@ -285,7 +310,7 @@ def validate_onnx_evaluation_report(
             absolute.get(dataset),
             f"ap_parity.absolute_delta.{dataset}",
         )
-        for metric in ("sap5", "sap10", "sap15"):
+        for metric in deploy_metrics:
             deltas.append(_number(
                 dataset_deltas.get(metric),
                 f"ap_parity.absolute_delta.{dataset}.{metric}",

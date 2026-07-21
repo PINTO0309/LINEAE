@@ -18,11 +18,21 @@ def _report(
     samples=10,
     config="configs/lineae/lineae_xl.py",
 ):
-    metrics = {"sap5": sap10 - 1, "sap10": sap10, "sap15": sap10 + 1}
+    metrics = {
+        "sap5": sap10 - 1,
+        "sap10": sap10,
+        "sap15": sap10 + 1,
+        "deploy_sap5": sap10 - 1,
+        "deploy_sap10": sap10,
+        "deploy_sap15": sap10 + 1,
+    }
     return {
-        "format": "lineae_evaluation_v1",
+        "format": "lineae_evaluation_v2",
         "checkpoint_sha256": checkpoint_hash,
         "config": str(Path(config).resolve()),
+        "num_queries": 1100,
+        "num_select": 300,
+        "sap_protocol": "official_all_queries_and_deployment_topk",
         "datasets": {
             "wireframe": {
                 **metrics,

@@ -1,7 +1,9 @@
 import torch
 import torch.distributed as dist
 
-__all__ = ['LineEvaluator']
+SAP_EVALUATION_PROTOCOL = 'official_all_queries_and_deployment_topk'
+
+__all__ = ['DualLineEvaluator', 'LineEvaluator', 'SAP_EVALUATION_PROTOCOL']
 
 
 class LineEvaluator(object):
@@ -169,3 +171,92 @@ class LineEvaluator(object):
         self.tp = {'sap5': [], 'sap10': [], 'sap15': []}
         self.fp = {'sap5': [], 'sap10': [], 'sap15': []}
         self.scores = []
+
+
+class DualLineEvaluator(object):
+    """Report official all-query and deployment top-k sAP in one pass."""
+
+    def __init__(self, deploy_max_predictions):
+        if deploy_max_predictions is None or int(deploy_max_predictions) <= 0:
+            raise ValueError('deploy_max_predictions must be positive')
+        self.deploy_max_predictions = int(deploy_max_predictions)
+        self.official = LineEvaluator(max_predictions=None)
+        self.deploy = LineEvaluator(max_predictions=self.deploy_max_predictions)
+        self.query_count = None
+        self.sap_results = {}
+
+    def update(self, predictions, ground_truth):
+        query_count = int(predictions['pred_lines'].shape[1])
+        if self.query_count is None:
+            self.query_count = query_count
+        elif query_count != self.query_count:
+            raise ValueError(
+                f'inconsistent evaluator query count: {query_count} != {self.query_count}'
+            )
+        pred_lines, pred_scores = self.official.prepare(
+            predictions['pred_lines'], predictions['pred_logits']
+        )
+        deploy_count = min(self.deploy_max_predictions, query_count)
+        self.official.scores.append(pred_scores.flatten(0, 1).detach().cpu())
+        self.deploy.scores.append(
+            pred_scores[:, :deploy_count].flatten(0, 1).detach().cpu()
+        )
+
+        for pred_l, gt in zip(pred_lines, ground_truth):
+            gt_l = self.official.prepare(gt['lines'])
+            ground_truth_count = len(gt_l)
+            self.official.n_gt.append(ground_truth_count)
+            self.deploy.n_gt.append(ground_truth_count)
+            if ground_truth_count == 0:
+                distances = torch.full(
+                    (len(pred_l),),
+                    float('inf'),
+                    dtype=pred_l.dtype,
+                    device=pred_l.device,
+                )
+                choices = torch.zeros(
+                    len(pred_l), dtype=torch.long, device=pred_l.device
+                )
+            else:
+                distances, choices = self.official.compute_distances(pred_l, gt_l)
+            for metric, threshold in self.official.spa_metrics.items():
+                tp, fp = self.official.msTPFP(distances, choices, threshold)
+                self.official.tp[metric].append(tp.detach().cpu())
+                self.official.fp[metric].append(fp.detach().cpu())
+                self.deploy.tp[metric].append(tp[:deploy_count].detach().cpu())
+                self.deploy.fp[metric].append(fp[:deploy_count].detach().cpu())
+
+    def synchronize_between_processes(self):
+        self.official.synchronize_between_processes()
+        self.deploy.synchronize_between_processes()
+
+    def accumulate(self):
+        self.official.accumulate()
+        self.deploy.accumulate()
+        self.sap_results = dict(self.official.sap_results)
+        self.sap_results.update({
+            f'official_{metric}': value
+            for metric, value in self.official.sap_results.items()
+        })
+        self.sap_results.update({
+            f'deploy_{metric}': value
+            for metric, value in self.deploy.sap_results.items()
+        })
+
+    def summarize(self):
+        query_label = self.query_count if self.query_count is not None else 'unknown'
+        print(f'Official sAP (all {query_label} queries):')
+        self.official.summarize()
+        deploy_count = (
+            min(self.deploy_max_predictions, self.query_count)
+            if self.query_count is not None else self.deploy_max_predictions
+        )
+        print(f'Deployment sAP (top {deploy_count} queries):')
+        for metric, result in self.deploy.sap_results.items():
+            print(f'deploy_{metric}:\t{result:.1f}')
+
+    def cleanup(self):
+        self.official.cleanup()
+        self.deploy.cleanup()
+        self.query_count = None
+        self.sap_results = {}

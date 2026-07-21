@@ -31,6 +31,9 @@ def _datasets(sap10):
             "sap5": sap10 - 1,
             "sap10": sap10,
             "sap15": sap10 + 1,
+            "deploy_sap5": sap10 - 1,
+            "deploy_sap10": sap10,
+            "deploy_sap15": sap10 + 1,
         }
         for dataset in ("wireframe", "york")
     }
@@ -38,9 +41,12 @@ def _datasets(sap10):
 
 def _evaluation(checkpoint_hash, sap10):
     return {
-        "format": "lineae_evaluation_v1",
+        "format": "lineae_evaluation_v2",
         "config": "/test/config.py",
         "checkpoint_sha256": checkpoint_hash,
+        "num_queries": 1100,
+        "num_select": 300,
+        "sap_protocol": "official_all_queries_and_deployment_topk",
         "datasets": _datasets(sap10),
     }
 
@@ -235,9 +241,12 @@ def test_model_card_requires_evaluation_torch_and_tensorrt_hash_chain(tmp_path):
     evaluation = _write_json(
         tmp_path / "evaluation.json",
         {
-            "format": "lineae_evaluation_v1",
+            "format": "lineae_evaluation_v2",
             "config": "/test/config.py",
             "checkpoint_sha256": checkpoint_hash,
+            "num_queries": 1100,
+            "num_select": 300,
+            "sap_protocol": "official_all_queries_and_deployment_topk",
             "datasets": datasets,
         },
     )
@@ -325,9 +334,9 @@ def test_full_dataset_onnx_ap_parity_is_hash_and_annotation_bound():
                 name: {
                     "annotation_sha256": annotation,
                     "samples": 10,
-                    "sap5": 70.0 + offset,
-                    "sap10": 65.0 + offset,
-                    "sap15": 60.0 + offset,
+                    "deploy_sap5": 70.0 + offset,
+                    "deploy_sap10": 65.0 + offset,
+                    "deploy_sap15": 60.0 + offset,
                 }
                 for name in ("wireframe", "york")
             },
@@ -446,6 +455,12 @@ def test_readme_documents_every_tensorboard_scalar_family():
         "Test/sap5",
         "Test/sap10",
         "Test/sap15",
+        "Test/official_sap5",
+        "Test/official_sap10",
+        "Test/official_sap15",
+        "Test/deploy_sap5",
+        "Test/deploy_sap10",
+        "Test/deploy_sap15",
     ):
         assert f"`{tag}`" in readme
 
@@ -456,10 +471,16 @@ def test_readme_documents_exact_xl_resume_command():
         "## Distillation", 1
     )[0]
     assert "-c configs/lineae/lineae_xl.py" in xl_workflow
-    assert "--resume outputs/lineae_xl-seed42/checkpoint.pth" in xl_workflow
-    assert "--options output_dir=outputs/lineae_xl-seed42" in xl_workflow
-    assert "batch_size_train=8 batch_size_val=8 epochs=36" in xl_workflow
+    assert (
+        "--resume outputs/lineae_xl-full-unfreeze-seed42/checkpoint.pth"
+        in xl_workflow
+    )
+    assert "output_dir=outputs/lineae_xl-full-unfreeze-seed42" in xl_workflow
+    assert "batch_size_train=8" in xl_workflow
+    assert "batch_size_val=64" in xl_workflow
+    assert "epochs=36" in xl_workflow
     assert "gradient_accumulation_steps=1" in xl_workflow
+    assert "use_checkpoint=False" in xl_workflow
 
 
 def test_readme_documents_xl_full_unfreeze_command():

@@ -145,6 +145,7 @@ RESUME_CRITICAL_FIELDS = (
     "distill_temperature_steps",
     "distill_temperature_steps_resolved",
     "selection_metric",
+    "sap_evaluation_protocol",
     "selection_mode",
     "use_ema",
     "ema_decay",

@@ -31,7 +31,12 @@ from util.training_state import (
 )
 import util.misc as utils
 
-from datasets import build_dataset, LineEvaluator, BatchImageCollateFunction
+from datasets import (
+    BatchImageCollateFunction,
+    DualLineEvaluator,
+    SAP_EVALUATION_PROTOCOL,
+    build_dataset,
+)
 from engine import train_one_epoch, evaluate, test
 from models.lineae.backbones.base import unwrap_state_dict
 from models.lineae.distillation import (
@@ -411,6 +416,7 @@ def main(args):
             setattr(args, k, v)
         else:
             raise ValueError("Key {} can used by args only".format(k))
+    args.sap_evaluation_protocol = SAP_EVALUATION_PROTOCOL
     sharing_strategy = configure_multiprocessing_sharing(args)
     if sharing_strategy is not None and utils.is_main_process():
         print(f'DataLoader multiprocessing sharing strategy: {sharing_strategy}')
@@ -444,8 +450,18 @@ def main(args):
                     'resume checkpoint selection metric mismatch: '
                     f"{resume_checkpoint.get('best_metric_name')!r} != {selection_metric!r}"
                 )
-            best_metric = resume_checkpoint.get('best_metric')
-            best_epoch = resume_checkpoint.get('best_epoch')
+            saved_sap_protocol = resume_checkpoint.get('config', {}).get(
+                'sap_evaluation_protocol'
+            )
+            if saved_sap_protocol is None:
+                print(
+                    'Resume checkpoint predates dual sAP reporting; model and '
+                    'optimizer state will be restored, but legacy top-k best-metric '
+                    'metadata is reset before official all-query selection.'
+                )
+            else:
+                best_metric = resume_checkpoint.get('best_metric')
+                best_epoch = resume_checkpoint.get('best_epoch')
 
     # setup tensorboard writer
     writer = None
@@ -676,7 +692,7 @@ def main(args):
         ):
             ema_m.load_state_dict(resume_checkpoint['ema_model'])
             evaluation_model = ema_m.module
-        evaluator = LineEvaluator(max_predictions=args.num_select)
+        evaluator = DualLineEvaluator(deploy_max_predictions=args.num_select)
         test_stats = test(evaluation_model, criterion, postprocessors, evaluator,
                         data_loader_val, device, args.output_dir, args=args)
         if utils.is_main_process():
@@ -805,6 +821,7 @@ def main(args):
                 'selection_metric': selection_metric,
                 'best_metric': best_metric,
                 'best_epoch': best_epoch,
+                'sap_evaluation_protocol': args.sap_evaluation_protocol,
             }
 
         log_stats.update({'now_time': str(datetime.datetime.now())})

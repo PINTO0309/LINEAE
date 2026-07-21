@@ -9,7 +9,12 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader, SequentialSampler
 
-from datasets import BatchImageCollateFunction, LineEvaluator, build_dataset
+from datasets import (
+    BatchImageCollateFunction,
+    DualLineEvaluator,
+    SAP_EVALUATION_PROTOCOL,
+    build_dataset,
+)
 from engine import test
 from main import create
 from models.lineae.backbones.base import unwrap_state_dict
@@ -58,7 +63,7 @@ def evaluate(args) -> dict:
             model,
             criterion,
             postprocessors,
-            LineEvaluator(max_predictions=config.num_select),
+            DualLineEvaluator(deploy_max_predictions=config.num_select),
             loader,
             device,
             str(args.output.parent),
@@ -72,7 +77,7 @@ def evaluate(args) -> dict:
             **metrics,
         }
     report = {
-        "format": "lineae_evaluation_v1",
+        "format": "lineae_evaluation_v2",
         "config": str(Path(args.config).resolve()),
         "checkpoint": str(checkpoint_path.resolve()),
         "checkpoint_sha256": sha256_file(checkpoint_path),
@@ -80,6 +85,8 @@ def evaluate(args) -> dict:
         "amp": args.amp,
         "batch_size": args.batch_size,
         "num_select": int(config.num_select),
+        "num_queries": int(config.num_queries),
+        "sap_protocol": SAP_EVALUATION_PROTOCOL,
         "datasets": results,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)

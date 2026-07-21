@@ -247,9 +247,12 @@ def test_plan_records_command_and_reports_are_bound_to_checkpoint(tmp_path):
     source.write_bytes(b"weights")
     digest = hashlib.sha256(b"weights").hexdigest()
     report_path.write_text(json.dumps({
-        "format": "lineae_evaluation_v1",
+        "format": "lineae_evaluation_v2",
         "config": str(Path("configs/lineae/lineae_s.py").resolve()),
         "checkpoint_sha256": digest,
+        "num_queries": 1100,
+        "num_select": 300,
+        "sap_protocol": "official_all_queries_and_deployment_topk",
         "datasets": {
             dataset: {
                 "annotation_sha256": "a" * 64,
@@ -257,6 +260,9 @@ def test_plan_records_command_and_reports_are_bound_to_checkpoint(tmp_path):
                 "sap5": 1.0,
                 "sap10": 2.0,
                 "sap15": 3.0,
+                "deploy_sap5": 1.0,
+                "deploy_sap10": 2.0,
+                "deploy_sap15": 3.0,
             }
             for dataset in ("wireframe", "york")
         },
@@ -327,11 +333,14 @@ def test_onnx_ap_completion_binds_model_torch_report_and_cuda_policy(tmp_path):
     torch_report.write_bytes(b"torch report")
     result = tmp_path / "onnx-eval.json"
     deltas = {
-        dataset: {metric: 0.01 for metric in ("sap5", "sap10", "sap15")}
+        dataset: {
+            metric: 0.01
+            for metric in ("deploy_sap5", "deploy_sap10", "deploy_sap15")
+        }
         for dataset in ("wireframe", "york")
     }
     result.write_text(json.dumps({
-        "format": "lineae_onnx_evaluation_v1",
+        "format": "lineae_onnx_evaluation_v2",
         "config": str(Path("configs/lineae/lineae_s.py").resolve()),
         "checkpoint_sha256": hashlib.sha256(b"checkpoint").hexdigest(),
         "onnx_sha256": hashlib.sha256(b"onnx").hexdigest(),
@@ -339,13 +348,15 @@ def test_onnx_ap_completion_binds_model_torch_report_and_cuda_policy(tmp_path):
         "providers": ["CUDAExecutionProvider", "CPUExecutionProvider"],
         "provider_options": {"CUDAExecutionProvider": {"use_tf32": "0"}},
         "cpu_ep_fallback_disabled": True,
+        "num_select": 300,
+        "sap_protocol": "deployment_topk",
         "datasets": {
             dataset: {
                 "annotation_sha256": "a" * 64,
                 "samples": 10,
-                "sap5": 1.0,
-                "sap10": 2.0,
-                "sap15": 3.0,
+                "deploy_sap5": 1.0,
+                "deploy_sap10": 2.0,
+                "deploy_sap15": 3.0,
             }
             for dataset in ("wireframe", "york")
         },

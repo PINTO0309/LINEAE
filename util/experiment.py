@@ -149,6 +149,18 @@ def write_experiment_records(
             "total_optimizer_steps": getattr(
                 args, "total_optimizer_steps_resolved", None
             ),
+            "sap_evaluation_protocol": getattr(
+                args, "sap_evaluation_protocol", None
+            ),
+            "lr_scheduler_total_units": getattr(
+                args, "lr_scheduler_total_units_resolved", None
+            ),
+            "lr_scheduler_warmup_units": getattr(
+                args, "lr_scheduler_warmup_units_resolved", None
+            ),
+            "lr_scheduler_post_warmup_units": getattr(
+                args, "lr_scheduler_post_warmup_units_resolved", None
+            ),
             "amp": args.amp,
             "optimizer": type(optimizer).__name__,
             "optimizer_fused": bool(getattr(optimizer, "lineae_fused", False)),
