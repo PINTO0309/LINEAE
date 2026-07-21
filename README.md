@@ -231,11 +231,22 @@ Train XL supervised first. The recommended single-96-GB-GPU recipe is batch 8, n
 ```bash
 uv run --locked python main.py \
 -c configs/lineae/lineae_xl.py \
---coco_path data/wireframe_processed --device cuda --amp \
---num_workers 8 --seed 42 \
---options output_dir=outputs/lineae_xl-seed42 \
-batch_size_train=8 batch_size_val=8 epochs=36 \
-gradient_accumulation_steps=1 use_checkpoint=False
+--coco_path data/wireframe_processed \
+--device cuda \
+--amp \
+--num_workers 8 \
+--seed 42 \
+--options \
+output_dir=outputs/lineae_xl-full-unfreeze-seed42 \
+batch_size_train=8 \
+batch_size_val=64 \
+epochs=36 \
+gradient_accumulation_steps=1 \
+progressive_unfreeze=False \
+backbone_trainable_layers=0 \
+initial_freeze_epochs=0 \
+unfreeze_interval=0 \
+use_checkpoint=False
 ```
 
 To resume an interrupted XL run from the latest completed epoch, use the same config, data path, device topology, AMP mode, worker count, seed, output directory, batch settings, and total epoch budget:
@@ -243,12 +254,23 @@ To resume an interrupted XL run from the latest completed epoch, use the same co
 ```bash
 uv run --locked python main.py \
 -c configs/lineae/lineae_xl.py \
---coco_path data/wireframe_processed --device cuda --amp \
---num_workers 8 --seed 42 \
---resume outputs/lineae_xl-seed42/checkpoint.pth \
---options output_dir=outputs/lineae_xl-seed42 \
-batch_size_train=8 batch_size_val=8 epochs=36 \
-gradient_accumulation_steps=1 use_checkpoint=False
+--coco_path data/wireframe_processed \
+--device cuda \
+--amp \
+--num_workers 8 \
+--seed 42 \
+--resume outputs/lineae_xl-full-unfreeze-seed42/checkpoint.pth \
+--options \
+output_dir=outputs/lineae_xl-full-unfreeze-seed42 \
+batch_size_train=8 \
+batch_size_val=64 \
+epochs=36 \
+gradient_accumulation_steps=1 \
+progressive_unfreeze=False \
+backbone_trainable_layers=0 \
+initial_freeze_epochs=0 \
+unfreeze_interval=0 \
+use_checkpoint=False
 ```
 
 `checkpoint.pth` is the atomic latest full-state checkpoint and resumes at the epoch after its saved completed epoch. The model, AdamW, cosine scheduler, GradScaler, progressive-unfreeze position, best metric/epoch, global optimizer step, and all RNG states are restored. A checkpoint saved after epoch 35 has already completed the 36-epoch recipe and therefore has no remaining training work; `--resume` does not extend the schedule.
