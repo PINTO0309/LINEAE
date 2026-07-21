@@ -132,6 +132,28 @@ def configure_multiprocessing_sharing(args) -> str | None:
     return strategy
 
 
+def resolve_training_horizon(args, optimizer_steps_per_epoch: int) -> dict:
+    """Describe the update horizon and expose batch-recipe deviations."""
+    accumulation = max(1, int(getattr(args, 'gradient_accumulation_steps', 1)))
+    effective_batch_size = (
+        int(args.batch_size_train)
+        * int(getattr(args, 'world_size', 1))
+        * accumulation
+    )
+    reference_batch_size = int(
+        getattr(args, 'recipe_reference_effective_batch_size', effective_batch_size)
+    )
+    if reference_batch_size <= 0:
+        raise ValueError('recipe_reference_effective_batch_size must be positive')
+    return {
+        'effective_batch_size': effective_batch_size,
+        'reference_effective_batch_size': reference_batch_size,
+        'optimizer_steps_per_epoch': int(optimizer_steps_per_epoch),
+        'total_optimizer_steps': int(optimizer_steps_per_epoch) * int(args.epochs),
+        'batch_scale': effective_batch_size / reference_batch_size,
+    }
+
+
 def metric_improved(value: float, best: float | None, mode: str) -> bool:
     value = float(value)
     if not math.isfinite(value):
@@ -573,6 +595,25 @@ def main(args):
         )
         accumulation = max(1, int(getattr(args, 'gradient_accumulation_steps', 1)))
         args.optimizer_steps_per_epoch = (len(data_loader_train) + accumulation - 1) // accumulation
+        horizon = resolve_training_horizon(args, args.optimizer_steps_per_epoch)
+        args.effective_batch_size_resolved = horizon['effective_batch_size']
+        args.total_optimizer_steps_resolved = horizon['total_optimizer_steps']
+        if utils.is_main_process():
+            print(
+                'Training horizon: '
+                f'effective_batch={horizon["effective_batch_size"]}, '
+                f'optimizer_steps_per_epoch={horizon["optimizer_steps_per_epoch"]}, '
+                f'total_optimizer_steps={horizon["total_optimizer_steps"]}'
+            )
+            if horizon['effective_batch_size'] != horizon['reference_effective_batch_size']:
+                print(
+                    'WARNING: effective batch differs from the committed recipe '
+                    f'({horizon["effective_batch_size"]} vs '
+                    f'{horizon["reference_effective_batch_size"]}, '
+                    f'{horizon["batch_scale"]:.2f}x). Learning rates are not '
+                    'automatically scaled; convergence and recipe comparability '
+                    'are not preserved.'
+                )
     else:
         args.optimizer_steps_per_epoch = 1
     args.distill_temperature_steps_resolved = None

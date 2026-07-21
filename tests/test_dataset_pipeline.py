@@ -10,7 +10,12 @@ from datasets import build_dataset
 from datasets.collate import BatchImageCollateFunction, encoder_token_count
 from datasets.coco import make_coco_transforms
 from datasets.transforms import Normalize, crop
-from main import configure_multiprocessing_sharing, create, data_loader_options
+from main import (
+    configure_multiprocessing_sharing,
+    create,
+    data_loader_options,
+    resolve_training_horizon,
+)
 from util.slconfig import SLConfig
 
 
@@ -255,3 +260,25 @@ def test_multiprocessing_tensor_sharing_uses_configured_strategy(monkeypatch):
     args.multiprocessing_sharing_strategy = "unsupported"
     with pytest.raises(ValueError, match="unsupported multiprocessing_sharing_strategy"):
         configure_multiprocessing_sharing(args)
+
+
+def test_training_horizon_reports_unscaled_large_batch_recipe():
+    args = SimpleNamespace(
+        batch_size_train=64,
+        world_size=1,
+        gradient_accumulation_steps=1,
+        recipe_reference_effective_batch_size=8,
+        epochs=36,
+    )
+
+    assert resolve_training_horizon(args, 78) == {
+        "effective_batch_size": 64,
+        "reference_effective_batch_size": 8,
+        "optimizer_steps_per_epoch": 78,
+        "total_optimizer_steps": 2808,
+        "batch_scale": 8.0,
+    }
+
+    args.recipe_reference_effective_batch_size = 0
+    with pytest.raises(ValueError, match="must be positive"):
+        resolve_training_horizon(args, 78)

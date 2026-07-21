@@ -11,6 +11,7 @@ use_photometric_distort = False
 photometric_distort_probability = 0.5
 batch_size_train = 8
 batch_size_val = 8
+recipe_reference_effective_batch_size = 8
 pin_memory = True
 prefetch_factor = 2
 # Large detection batches contain many independently sized target tensors.

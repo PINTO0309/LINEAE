@@ -32,6 +32,7 @@ use_lmap = False
 multi_scale_train = False
 batch_size_train = 1
 batch_size_val = 1
+recipe_reference_effective_batch_size = 1
 
 hybrid_encoder = 'hybrid_encoder_asymmetric_conv'
 pe_temperatureH = 20

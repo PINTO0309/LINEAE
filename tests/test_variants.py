@@ -247,6 +247,7 @@ def test_full_s_baseline_is_distillation_matched_but_probe_stays_one_batch():
     distillation = SLConfig.fromfile("configs/lineae/distill/lineae_s.py")
 
     assert probe.gradient_accumulation_steps == 1
+    assert probe.recipe_reference_effective_batch_size == 1
     assert baseline.distill_weight == 0.0
     assert probe.training_profile == "p0_smoke"
     assert probe.multi_scale_train is False
@@ -257,6 +258,7 @@ def test_full_s_baseline_is_distillation_matched_but_probe_stays_one_batch():
     assert baseline.prefetch_factor == 2
     assert baseline.multiprocessing_sharing_strategy == "file_system"
     assert baseline.batch_size_train == 8
+    assert baseline.recipe_reference_effective_batch_size == 8
     assert baseline.gradient_accumulation_steps == 1
     assert baseline.batch_size_train * baseline.gradient_accumulation_steps == 8
     assert baseline.scheduler_step_unit == "optimizer"

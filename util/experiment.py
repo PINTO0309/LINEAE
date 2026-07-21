@@ -132,9 +132,22 @@ def write_experiment_records(
             "batch_size_per_rank": getattr(args, "batch_size_train", None),
             "gradient_accumulation_steps": accumulation,
             "effective_batch_size": (
-                getattr(args, "batch_size_train", 0)
-                * getattr(args, "world_size", 1)
-                * accumulation
+                getattr(
+                    args,
+                    "effective_batch_size_resolved",
+                    getattr(args, "batch_size_train", 0)
+                    * getattr(args, "world_size", 1)
+                    * accumulation,
+                )
+            ),
+            "reference_effective_batch_size": getattr(
+                args, "recipe_reference_effective_batch_size", None
+            ),
+            "optimizer_steps_per_epoch": getattr(
+                args, "optimizer_steps_per_epoch", None
+            ),
+            "total_optimizer_steps": getattr(
+                args, "total_optimizer_steps_resolved", None
             ),
             "amp": args.amp,
             "optimizer": type(optimizer).__name__,

@@ -226,7 +226,7 @@ Parquet can help when metadata filtering or remote columnar analytics dominates,
 
 ## XL teacher workflow
 
-Train XL supervised first. The recommended single-96-GB-GPU recipe is batch 8, no accumulation, 36 epochs, cosine LR, AMP, eight workers, seed 42, and the progressive schedule documented above:
+Train XL supervised first. The recommended single-96-GB-GPU recipe is batch 8, no accumulation, 36 epochs, cosine LR, AMP, eight workers, seed 42, and the progressive schedule documented above. The 36-epoch LR horizon is calibrated to 625 optimizer updates per epoch and 22,500 updates in total; increasing `batch_size_train` does not automatically scale either LR, so batch 64 would provide only 78 updates per epoch and 2,808 updates in total and is not the committed teacher recipe. Increase `batch_size_val` independently when it fits, and disable activation checkpointing to trade spare VRAM for training speed without changing optimization semantics:
 
 ```bash
 uv run --locked python main.py \
@@ -235,7 +235,7 @@ uv run --locked python main.py \
 --num_workers 8 --seed 42 \
 --options output_dir=outputs/lineae_xl-seed42 \
 batch_size_train=8 batch_size_val=8 epochs=36 \
-gradient_accumulation_steps=1
+gradient_accumulation_steps=1 use_checkpoint=False
 ```
 
 To resume an interrupted XL run from the latest completed epoch, use the same config, data path, device topology, AMP mode, worker count, seed, output directory, batch settings, and total epoch budget:
@@ -248,7 +248,7 @@ uv run --locked python main.py \
 --resume outputs/lineae_xl-seed42/checkpoint.pth \
 --options output_dir=outputs/lineae_xl-seed42 \
 batch_size_train=8 batch_size_val=8 epochs=36 \
-gradient_accumulation_steps=1
+gradient_accumulation_steps=1 use_checkpoint=False
 ```
 
 `checkpoint.pth` is the atomic latest full-state checkpoint and resumes at the epoch after its saved completed epoch. The model, AdamW, cosine scheduler, GradScaler, progressive-unfreeze position, best metric/epoch, global optimizer step, and all RNG states are restored. A checkpoint saved after epoch 35 has already completed the 36-epoch recipe and therefore has no remaining training work; `--resume` does not extend the schedule.
