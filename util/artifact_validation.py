@@ -224,7 +224,7 @@ def validate_onnx_export_report(
     require_simplified: bool = True,
 ) -> None:
     report = _mapping(report, "ONNX export report")
-    if report.get("format") != "lineae_onnx_export_v2":
+    if report.get("format") != "lineae_onnx_export_v3":
         raise ValueError("unsupported ONNX export report format")
     _preprocessing(report)
     _checkpoint(report, expected_checkpoint)
@@ -232,8 +232,6 @@ def validate_onnx_export_report(
     onnx_hash = _sha256(report.get("onnx_sha256"), "onnx_sha256")
     if expected_onnx is not None and onnx_hash != expected_onnx:
         raise ValueError("ONNX report SHA-256 does not match its model")
-    if report.get("onnxruntime_version") != "1.26.0":
-        raise ValueError("ONNX export did not use onnxruntime 1.26.0")
     if report.get("deploy_mode") is not True:
         raise ValueError("ONNX export did not use the fused deploy model")
     if str(report.get("onnxsim_version", "")).lstrip("v") != "0.6.5":
@@ -244,10 +242,6 @@ def validate_onnx_export_report(
     seed = report.get("seed")
     if not isinstance(seed, int) or isinstance(seed, bool) or seed < 0:
         raise ValueError("ONNX export seed must be a non-negative integer")
-    parity = _mapping(report.get("parity"), "parity")
-    for output in ("pred_logits", "pred_lines"):
-        if parity.get(output) is not True:
-            raise ValueError(f"ONNX {output} parity did not pass")
     shape = report.get("input_shape")
     if (
         not isinstance(shape, list)

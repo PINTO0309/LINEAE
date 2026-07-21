@@ -28,15 +28,14 @@ class _ReferenceSession:
 def test_tensorrt_benchmark_binds_engine_latency_and_set_parity(tmp_path, monkeypatch):
     onnx = tmp_path / "model.onnx"
     onnx.write_bytes(b"onnx")
-    onnx_report = tmp_path / "model.parity.json"
+    onnx_report = tmp_path / "model.export.json"
     onnx_report.write_text(json.dumps({
-        "format": "lineae_onnx_export_v2",
+        "format": "lineae_onnx_export_v3",
         "image_preprocess_schema": "opencv_rgb_inter_linear_v2",
         "opencv_version": "4.13.0",
         "config": "/test/config.py",
         "checkpoint_sha256": "a" * 64,
         "onnx_sha256": sha256_file(onnx),
-        "onnxruntime_version": "1.26.0",
         "onnxsim_version": "v0.6.5",
         "onnx_simplified": True,
         "deploy_mode": True,
@@ -47,7 +46,6 @@ def test_tensorrt_benchmark_binds_engine_latency_and_set_parity(tmp_path, monkey
             "pred_logits": [1, 2, 2],
             "pred_lines": [1, 2, 4],
         },
-        "parity": {"pred_logits": True, "pred_lines": True},
     }), encoding="utf-8")
     monkeypatch.setattr(benchmark_module.shutil, "which", lambda _name: "/trtexec")
     monkeypatch.setattr(

@@ -119,14 +119,13 @@ def test_torch_benchmark_schema_requires_complete_raw_cuda_samples():
         )
 
 
-def test_onnx_and_tensorrt_schemas_bind_runtime_versions_and_latency():
+def test_onnx_export_and_tensorrt_schemas_bind_tool_versions_and_latency():
     onnx_report = {
         **_PREPROCESSING,
-        "format": "lineae_onnx_export_v2",
+        "format": "lineae_onnx_export_v3",
         "config": "/test/config.py",
         "checkpoint_sha256": "b" * 64,
         "onnx_sha256": "c" * 64,
-        "onnxruntime_version": "1.26.0",
         "onnxsim_version": "v0.6.5",
         "onnx_simplified": True,
         "deploy_mode": True,
@@ -137,15 +136,14 @@ def test_onnx_and_tensorrt_schemas_bind_runtime_versions_and_latency():
             "pred_logits": [1, 300, 2],
             "pred_lines": [1, 300, 4],
         },
-        "parity": {"pred_logits": True, "pred_lines": True},
     }
     validate_onnx_export_report(onnx_report)
-    onnx_report["format"] = "lineae_onnx_export_v1"
+    onnx_report["format"] = "lineae_onnx_export_v2"
     with pytest.raises(ValueError, match="unsupported ONNX export report format"):
         validate_onnx_export_report(onnx_report)
-    onnx_report["format"] = "lineae_onnx_export_v2"
-    onnx_report["onnxruntime_version"] = "1.25.0"
-    with pytest.raises(ValueError, match="onnxruntime 1.26.0"):
+    onnx_report["format"] = "lineae_onnx_export_v3"
+    onnx_report["onnxsim_version"] = "v0.6.4"
+    with pytest.raises(ValueError, match="onnxsim 0.6.5"):
         validate_onnx_export_report(onnx_report)
 
     trt_report = {

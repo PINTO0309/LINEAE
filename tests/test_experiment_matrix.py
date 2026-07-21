@@ -286,23 +286,22 @@ def test_plan_records_command_and_reports_are_bound_to_checkpoint(tmp_path):
     assert not report.complete()
 
 
-def test_onnx_completion_requires_pinned_simplified_parity_report(tmp_path):
+def test_onnx_completion_requires_pinned_simplified_export_report(tmp_path):
     source = tmp_path / "model.pth"
     source.write_bytes(b"weights")
     digest = hashlib.sha256(b"weights").hexdigest()
     model = tmp_path / "model.onnx"
     model.write_bytes(b"onnx")
-    parity_path = tmp_path / "model.parity.json"
+    export_report_path = tmp_path / "model.export.json"
     payload = {
         **_PREPROCESSING,
-        "format": "lineae_onnx_export_v2",
+        "format": "lineae_onnx_export_v3",
         "config": "/test/config.py",
         "checkpoint_sha256": digest,
         "onnx_sha256": hashlib.sha256(b"onnx").hexdigest(),
         "onnx_simplified": True,
         "deploy_mode": True,
         "seed": 0,
-        "onnxruntime_version": "1.26.0",
         "onnxsim_version": "v0.6.5",
         "input_shape": [1, 3, 640, 640],
         "num_select": 300,
@@ -310,24 +309,23 @@ def test_onnx_completion_requires_pinned_simplified_parity_report(tmp_path):
             "pred_logits": [1, 300, 2],
             "pred_lines": [1, 300, 4],
         },
-        "parity": {"pred_logits": True, "pred_lines": True},
     }
-    parity_path.write_text(json.dumps(payload), encoding="utf-8")
+    export_report_path.write_text(json.dumps(payload), encoding="utf-8")
     task = Task(
         name="onnx",
         stage="deployment",
         command=[],
         completion_kind="onnx",
-        completion_paths=(model, parity_path),
+        completion_paths=(model, export_report_path),
         source_checkpoint=source,
     )
     assert task.complete()
     payload["onnx_simplified"] = False
-    parity_path.write_text(json.dumps(payload), encoding="utf-8")
+    export_report_path.write_text(json.dumps(payload), encoding="utf-8")
     assert not task.complete()
     payload["onnx_simplified"] = True
-    payload["parity"] = {}
-    parity_path.write_text(json.dumps(payload), encoding="utf-8")
+    payload["format"] = "lineae_onnx_export_v2"
+    export_report_path.write_text(json.dumps(payload), encoding="utf-8")
     assert not task.complete()
 
 

@@ -360,11 +360,11 @@ def test_full_dataset_onnx_ap_parity_is_hash_and_annotation_bound():
         compare_ap(report(annotation="b" * 64), report(), tolerance=0.05)
 
 
-def test_onnx_evaluation_rejects_a_missing_parity_schema(tmp_path):
+def test_onnx_evaluation_rejects_an_outdated_export_schema(tmp_path):
     model = tmp_path / "model.onnx"
-    model.write_bytes(b"not parsed because parity is rejected first")
-    parity = _write_json(
-        tmp_path / "model.parity.json",
+    model.write_bytes(b"not parsed because the export report is rejected first")
+    export_report = _write_json(
+        tmp_path / "model.export.json",
         {
             **_PREPROCESSING,
             "format": "lineae_onnx_export_v2",
@@ -382,11 +382,10 @@ def test_onnx_evaluation_rejects_a_missing_parity_schema(tmp_path):
                 "pred_logits": [1, 300, 2],
                 "pred_lines": [1, 300, 4],
             },
-            "parity": {},
         },
     )
-    args = SimpleNamespace(onnx=model, onnx_report=parity)
-    with pytest.raises(ValueError, match="pred_logits parity did not pass"):
+    args = SimpleNamespace(onnx=model, onnx_report=export_report)
+    with pytest.raises(ValueError, match="unsupported ONNX export report format"):
         evaluate_onnx(args)
 
 

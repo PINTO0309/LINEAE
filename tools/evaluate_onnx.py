@@ -75,10 +75,10 @@ def evaluate(args) -> dict:
     import onnxruntime as ort
 
     onnx_path = Path(args.onnx)
-    parity_path = args.onnx_report or onnx_path.with_suffix(".parity.json")
-    if not onnx_path.is_file() or not parity_path.is_file():
-        raise FileNotFoundError("ONNX model and export parity report are required")
-    export_report = json.loads(parity_path.read_text(encoding="utf-8"))
+    export_report_path = args.onnx_report or onnx_path.with_suffix(".export.json")
+    if not onnx_path.is_file() or not export_report_path.is_file():
+        raise FileNotFoundError("ONNX model and export report are required")
+    export_report = json.loads(export_report_path.read_text(encoding="utf-8"))
     validate_onnx_export_report(
         export_report,
         expected_onnx=sha256_file(onnx_path),

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import onnx
 import onnxruntime as ort
 import onnxsim
@@ -10,6 +12,15 @@ from tools.export_onnx import ExportWrapper
 from util.deployment import resolve_num_select
 from util.onnx_runtime import create_ort_session
 from util.slconfig import SLConfig
+
+
+def test_export_tool_does_not_run_onnx_runtime_parity():
+    source = Path("tools/export_onnx.py").read_text(encoding="utf-8")
+    assert "import onnxruntime" not in source
+    assert "compare_line_sets" not in source
+    assert "create_ort_session" not in source
+    assert ".parity.json" not in source
+    assert "--cuda-ort" not in source
 
 
 def test_deployment_num_select_accepts_cli_override_and_validates_query_count():

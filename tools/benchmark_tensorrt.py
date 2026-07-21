@@ -31,10 +31,10 @@ def benchmark(args) -> dict:
         raise FileNotFoundError(f"TensorRT trtexec executable not found: {args.trtexec}")
     if not args.onnx.is_file():
         raise FileNotFoundError(f"ONNX model not found: {args.onnx}")
-    onnx_report_path = args.onnx_report or args.onnx.with_suffix(".parity.json")
+    onnx_report_path = args.onnx_report or args.onnx.with_suffix(".export.json")
     if not onnx_report_path.is_file():
         raise FileNotFoundError(
-            f"ONNX parity report not found: {onnx_report_path}; export and verify before TensorRT"
+            f"ONNX export report not found: {onnx_report_path}; export before TensorRT"
         )
     onnx_report = json.loads(onnx_report_path.read_text(encoding="utf-8"))
     onnx_hash = sha256_file(args.onnx)

@@ -442,7 +442,7 @@ def _export_tasks(
 ) -> tuple[Task, Task]:
     checkpoint = training_task.output_dir / "checkpoint_best.pth"
     onnx = options.output_root / "onnx" / f"{name}.onnx"
-    parity = options.output_root / "onnx" / f"{name}.parity.json"
+    export_report = options.output_root / "onnx" / f"{name}.export.json"
     export = Task(
         name=f"export_{name}",
         stage="deployment",
@@ -456,11 +456,11 @@ def _export_tasks(
             "--output",
             str(onnx),
             "--report",
-            str(parity),
+            str(export_report),
         ],
         dependencies=(training_task.name,),
         completion_kind="onnx",
-        completion_paths=(onnx, parity),
+        completion_paths=(onnx, export_report),
         source_checkpoint=checkpoint,
     )
     engine = options.output_root / "engines" / f"{name}.engine"
@@ -475,7 +475,7 @@ def _export_tasks(
             "--onnx",
             str(onnx),
             "--onnx-report",
-            str(parity),
+            str(export_report),
             "--engine",
             str(engine),
             "--fp16",
@@ -503,7 +503,7 @@ def _onnx_evaluation_task(
     torch_evaluation_task: Task,
 ) -> Task:
     checkpoint = training_task.output_dir / "checkpoint_best.pth"
-    onnx, parity = export_task.completion_paths
+    onnx, export_report = export_task.completion_paths
     output = options.output_root / "evaluations" / f"{name}-onnx.json"
     command = [
         options.python,
@@ -513,7 +513,7 @@ def _onnx_evaluation_task(
         "--onnx",
         str(onnx),
         "--onnx-report",
-        str(parity),
+        str(export_report),
         "--torch-report",
         str(torch_evaluation_task.completion_paths[0]),
         "--dataset",
