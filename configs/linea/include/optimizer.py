@@ -6,4 +6,6 @@ epochs = 12
 lr_drop_list = [11]
 clip_max_norm = 0.1
 
-save_checkpoint_interval = 10
+# Keep only the atomic latest state and validation-selected best state by default.
+# Set a positive interval explicitly to opt back into numbered snapshots.
+save_checkpoint_interval = 0

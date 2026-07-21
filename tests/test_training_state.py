@@ -39,6 +39,20 @@ class TinyModel(nn.Module):
         return self.head(self.backbone.core(value))
 
 
+@pytest.mark.parametrize(
+    "config_path",
+    [
+        "configs/linea/linea_hgnetv2_n.py",
+        "configs/lineae/lineae_n.py",
+        "configs/lineae/distill/lineae_n.py",
+        "configs/lineae/lineae_xl.py",
+    ],
+)
+def test_periodic_checkpoint_snapshots_are_disabled_by_default(config_path):
+    config = SLConfig.fromfile(config_path)
+    assert config.save_checkpoint_interval == 0
+
+
 def _step(model, optimizer, scheduler, value):
     optimizer.zero_grad()
     loss = model(value).square().mean()
