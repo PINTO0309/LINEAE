@@ -107,6 +107,7 @@ RESUME_CRITICAL_FIELDS = (
     "batch_size_val",
     "pin_memory",
     "prefetch_factor",
+    "multiprocessing_sharing_strategy",
     "gradient_accumulation_steps",
     "training_profile",
     "amp",

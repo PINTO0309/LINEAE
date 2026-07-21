@@ -255,6 +255,7 @@ def test_full_s_baseline_is_distillation_matched_but_probe_stays_one_batch():
     assert distillation.multi_scale_train is True
     assert baseline.pin_memory is True
     assert baseline.prefetch_factor == 2
+    assert baseline.multiprocessing_sharing_strategy == "file_system"
     assert baseline.batch_size_train == 8
     assert baseline.gradient_accumulation_steps == 1
     assert baseline.batch_size_train * baseline.gradient_accumulation_steps == 8
@@ -285,6 +286,10 @@ def test_no_kd_and_kd_training_step_semantics_match(variant):
     assert baseline.multi_scale_train == distillation.multi_scale_train
     assert baseline.pin_memory == distillation.pin_memory
     assert baseline.prefetch_factor == distillation.prefetch_factor
+    assert (
+        baseline.multiprocessing_sharing_strategy
+        == distillation.multiprocessing_sharing_strategy
+    )
 
 
 @pytest.mark.parametrize("variant", list(VARIANTS))

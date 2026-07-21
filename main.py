@@ -115,6 +115,23 @@ def data_loader_options(args, device: torch.device) -> dict:
     return options
 
 
+def configure_multiprocessing_sharing(args) -> str | None:
+    """Use a tensor-sharing mode that does not retain one FD per storage."""
+    if int(args.num_workers) <= 0:
+        return None
+    strategy = str(
+        getattr(args, 'multiprocessing_sharing_strategy', 'file_system')
+    )
+    available = torch.multiprocessing.get_all_sharing_strategies()
+    if strategy not in available:
+        raise ValueError(
+            'unsupported multiprocessing_sharing_strategy '
+            f'{strategy!r}; available={sorted(available)}'
+        )
+    torch.multiprocessing.set_sharing_strategy(strategy)
+    return strategy
+
+
 def metric_improved(value: float, best: float | None, mode: str) -> bool:
     value = float(value)
     if not math.isfinite(value):
@@ -372,6 +389,9 @@ def main(args):
             setattr(args, k, v)
         else:
             raise ValueError("Key {} can used by args only".format(k))
+    sharing_strategy = configure_multiprocessing_sharing(args)
+    if sharing_strategy is not None and utils.is_main_process():
+        print(f'DataLoader multiprocessing sharing strategy: {sharing_strategy}')
     backbone_path = Path(args.backbone_weights) if getattr(args, 'backbone_weights', None) else None
     args.backbone_checkpoint_sha256 = (
         sha256_file(backbone_path) if backbone_path is not None and backbone_path.is_file() else None

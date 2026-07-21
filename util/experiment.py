@@ -150,6 +150,10 @@ def write_experiment_records(
                 getattr(args, "prefetch_factor", 2)
                 if getattr(args, "num_workers", 0) > 0 else None
             ),
+            "multiprocessing_sharing_strategy": (
+                getattr(args, "multiprocessing_sharing_strategy", "file_system")
+                if getattr(args, "num_workers", 0) > 0 else None
+            ),
             "trainable_parameters": trainable,
             "frozen_parameters": frozen,
             "optimizer_groups": group_records,

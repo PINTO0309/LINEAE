@@ -13,3 +13,6 @@ batch_size_train = 8
 batch_size_val = 8
 pin_memory = True
 prefetch_factor = 2
+# Large detection batches contain many independently sized target tensors.
+# file_system avoids retaining one open file descriptor per shared storage.
+multiprocessing_sharing_strategy = 'file_system'

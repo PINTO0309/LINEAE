@@ -10,7 +10,7 @@ from datasets import build_dataset
 from datasets.collate import BatchImageCollateFunction, encoder_token_count
 from datasets.coco import make_coco_transforms
 from datasets.transforms import Normalize, crop
-from main import create, data_loader_options
+from main import configure_multiprocessing_sharing, create, data_loader_options
 from util.slconfig import SLConfig
 
 
@@ -225,3 +225,33 @@ def test_data_loader_options_enable_pinned_prefetch_only_when_applicable():
     args.prefetch_factor = 0
     with pytest.raises(ValueError, match="prefetch_factor must be positive"):
         data_loader_options(args, torch.device("cuda"))
+
+
+def test_multiprocessing_tensor_sharing_uses_configured_strategy(monkeypatch):
+    selected = []
+    monkeypatch.setattr(
+        torch.multiprocessing,
+        "get_all_sharing_strategies",
+        lambda: {"file_descriptor", "file_system"},
+    )
+    monkeypatch.setattr(
+        torch.multiprocessing,
+        "set_sharing_strategy",
+        selected.append,
+    )
+
+    args = SimpleNamespace(
+        num_workers=8,
+        multiprocessing_sharing_strategy="file_system",
+    )
+    assert configure_multiprocessing_sharing(args) == "file_system"
+    assert selected == ["file_system"]
+
+    args.num_workers = 0
+    assert configure_multiprocessing_sharing(args) is None
+    assert selected == ["file_system"]
+
+    args.num_workers = 1
+    args.multiprocessing_sharing_strategy = "unsupported"
+    with pytest.raises(ValueError, match="unsupported multiprocessing_sharing_strategy"):
+        configure_multiprocessing_sharing(args)
