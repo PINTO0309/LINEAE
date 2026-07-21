@@ -42,6 +42,9 @@ def test_s_forward_loss_backward_and_update(device):
     )
     tracked = model.backbone.pyramid.p3[0].weight
     before = tracked.detach().clone()
+    encoder_line_head = model.decoder.enc_out_bbox_embed.layers[-1].weight
+    assert torch.equal(encoder_line_head[0], encoder_line_head[2])
+    assert torch.equal(encoder_line_head[1], encoder_line_head[3])
     frozen = model.backbone.core.blocks[0].attn.qkv.weight
     frozen_before = frozen.detach().clone()
 
@@ -65,6 +68,8 @@ def test_s_forward_loss_backward_and_update(device):
     total.backward()
     optimizer.step()
     assert not torch.equal(before, tracked.detach())
+    assert not torch.equal(encoder_line_head[0], encoder_line_head[2])
+    assert not torch.equal(encoder_line_head[1], encoder_line_head[3])
     assert torch.equal(frozen_before, frozen.detach())
 
     empty_targets = [{
@@ -72,6 +77,11 @@ def test_s_forward_loss_backward_and_update(device):
         "lines": torch.empty(0, 4, device=device),
     }]
     empty_outputs = model(images, empty_targets)
+    predicted_lengths = (
+        empty_outputs["pred_lines"][..., :2]
+        - empty_outputs["pred_lines"][..., 2:]
+    ).square().sum(dim=-1).sqrt()
+    assert torch.count_nonzero(predicted_lengths) > 0
     reloaded_anchors = next(iter(model.decoder._dynamic_anchor_cache.values()))
     assert reloaded_anchors[0] is cached_anchors[0]
     assert reloaded_anchors[1] is cached_anchors[1]

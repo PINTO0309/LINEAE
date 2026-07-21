@@ -63,6 +63,8 @@ set_cost_lines = 5.0
 criterionname = 'LINEACRITERION'
 criterion_type = 'default'
 endpoint_invariant_lines = True
+# Checkpoint compatibility marker for deterministic direct-branch tie gradients.
+endpoint_loss_schema = 'undirected_direct_tie_v2'
 weight_dict = {'loss_logits': 1, 'loss_line': 5}
 losses = ['labels', 'lines'] 
 focal_alpha = 0.1

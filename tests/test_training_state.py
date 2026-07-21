@@ -616,6 +616,14 @@ def test_eval_can_load_checkpoint_before_corrected_dn_noise_schema():
     validate_resume_checkpoint(_resume_checkpoint_stub(config={}), args)
 
 
+def test_resume_rejects_checkpoint_before_endpoint_loss_tie_schema():
+    args = SimpleNamespace(endpoint_loss_schema="undirected_direct_tie_v2")
+    checkpoint = _resume_checkpoint_stub(config={})
+
+    with pytest.raises(ValueError, match="endpoint-loss tie handling"):
+        validate_resume_checkpoint(checkpoint, args)
+
+
 
 @pytest.mark.parametrize(
     ("field", "saved", "changed"),

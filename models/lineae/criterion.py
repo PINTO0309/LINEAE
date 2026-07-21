@@ -5,7 +5,12 @@ from torchvision.transforms.functional import resize
 
 from .matcher import build_matcher
 
-from .linea_utils import bbox2distance, endpoint_swap, sigmoid_focal_loss
+from .linea_utils import (
+    bbox2distance,
+    endpoint_invariant_loss,
+    endpoint_swap,
+    sigmoid_focal_loss,
+)
 
 from ..registry import MODULE_BUILD_FUNCS
 from util.misc import get_world_size, is_dist_avail_and_initialized
@@ -81,7 +86,7 @@ class LINEACriterion(nn.Module):
                 endpoint_swap(target_lines),
                 reduction='none',
             ).sum(dim=-1)
-            loss_line = torch.minimum(direct, swapped)
+            loss_line = endpoint_invariant_loss(direct, swapped)
         else:
             loss_line = direct
 

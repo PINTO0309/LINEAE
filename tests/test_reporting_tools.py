@@ -488,7 +488,7 @@ def test_readme_documents_xl_full_unfreeze_command():
     xl_workflow = readme.split("## XL teacher workflow", 1)[1].split(
         "## Distillation", 1
     )[0]
-    assert "output_dir=outputs/lineae_xl-full-unfreeze-seed42" in xl_workflow
+    assert "output_dir=outputs/lineae_xl-full-unfreeze-v2-seed42" in xl_workflow
     assert "progressive_unfreeze=False backbone_trainable_layers=0" in xl_workflow
     assert "initial_freeze_epochs=0 unfreeze_interval=0" in xl_workflow
     assert "`backbone_trainable_layers=0` means all backbone blocks" in xl_workflow

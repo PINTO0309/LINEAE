@@ -34,6 +34,19 @@ def endpoint_swap(lines):
     return lines[..., [2, 3, 0, 1]]
 
 
+def endpoint_invariant_loss(direct, swapped):
+    """Select the cheaper endpoint order with a deterministic gradient on ties.
+
+    ``torch.minimum`` splits the gradient between equal inputs.  For a
+    zero-length prediction, directed and swapped line losses are exactly equal,
+    and that split gives both predicted endpoints identical gradients.  LINEA's
+    point anchors then cannot acquire a non-zero length.  Selecting the direct
+    branch on ties keeps the same endpoint-invariant scalar value while breaking
+    that optimization symmetry.
+    """
+    return torch.where(direct <= swapped, direct, swapped)
+
+
 def pairwise_endpoint_l1(student_lines, target_lines):
     """Pairwise undirected-line L1 cost."""
     direct = torch.cdist(student_lines.float(), target_lines.float(), p=1)

@@ -20,7 +20,7 @@ from scipy.optimize import linear_sum_assignment
 from torch import Tensor, nn
 import torch.nn.functional as F
 
-from .linea_utils import endpoint_swap, pairwise_endpoint_l1
+from .linea_utils import endpoint_invariant_loss, endpoint_swap, pairwise_endpoint_l1
 
 
 @dataclass(frozen=True)
@@ -328,7 +328,7 @@ class LineSetDistillationCriterion(nn.Module):
             endpoint_swap(teacher_lines),
             reduction="none",
         ).sum(dim=-1)
-        return torch.minimum(direct, swapped).mean()
+        return endpoint_invariant_loss(direct, swapped).mean()
 
     def _feature_loss(self, student_outputs, teacher_outputs) -> Tensor | None:
         if self.feature_weight == 0:

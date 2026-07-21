@@ -238,6 +238,19 @@ def test_swapping_teacher_endpoints_does_not_change_line_loss():
     assert torch.allclose(direct["loss_kd_line"], swapped["loss_kd_line"], atol=1e-7)
 
 
+def test_kd_line_loss_breaks_zero_length_student_symmetry():
+    student = torch.full((1, 4), 0.5, requires_grad=True)
+    teacher = torch.tensor([[0.2, 0.2, 0.8, 0.8]])
+
+    loss = LineSetDistillationCriterion._line_loss(student, teacher)
+    loss.backward()
+
+    assert student.grad[0, 0].item() > 0
+    assert student.grad[0, 1].item() > 0
+    assert student.grad[0, 2].item() < 0
+    assert student.grad[0, 3].item() < 0
+
+
 def test_empty_teacher_selection_returns_finite_graph_connected_zeros():
     student = _example(requires_grad=True)
     teacher = _outputs(
