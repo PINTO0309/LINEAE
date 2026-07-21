@@ -253,6 +253,22 @@ gradient_accumulation_steps=1
 
 `checkpoint.pth` is the atomic latest full-state checkpoint and resumes at the epoch after its saved completed epoch. The model, AdamW, cosine scheduler, GradScaler, progressive-unfreeze position, best metric/epoch, global optimizer step, and all RNG states are restored. A checkpoint saved after epoch 35 has already completed the 36-epoch recipe and therefore has no remaining training work; `--resume` does not extend the schedule.
 
+To disable progressive unfreezing and train the entire XL DINO core from epoch 0, start a separate run with all four unfreeze controls overridden:
+
+```bash
+uv run --locked python main.py \
+-c configs/lineae/lineae_xl.py \
+--coco_path data/wireframe_processed --device cuda --amp \
+--num_workers 8 --seed 42 \
+--options output_dir=outputs/lineae_xl-full-unfreeze-seed42 \
+batch_size_train=8 batch_size_val=8 epochs=36 \
+gradient_accumulation_steps=1 \
+progressive_unfreeze=False backbone_trainable_layers=0 \
+initial_freeze_epochs=0 unfreeze_interval=0
+```
+
+In LINEAE, `backbone_trainable_layers=0` means all backbone blocks, while `-1` means none. Setting only `progressive_unfreeze=False` would leave the initial final two blocks trainable for the entire run instead of enabling all 12. Full unfreezing allocates backbone gradients and AdamW state from the beginning, so its peak VRAM is higher than the default recipe's early frozen epochs. It is a separate training recipe and cannot resume a checkpoint created with the progressive settings; keep the distinct `output_dir` shown above. Activation checkpointing remains enabled through the inherited `use_checkpoint=True` setting.
+
 Evaluate both the candidate and the reproduced baseline on both datasets with `tools/evaluate_checkpoint.py`. Then promote only an XL candidate whose recorded Wireframe sAP10 beats the baseline:
 
 ```bash
