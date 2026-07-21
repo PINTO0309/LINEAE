@@ -221,6 +221,7 @@ __marimo__/
 *.pt
 *.onnx
 *.tar.gz
+*.mp4
 
 # Local datasets, training artifacts, and exported engines
 data/wireframe*/

@@ -421,6 +421,32 @@ uv run --locked python tools/export_onnx.py \
 --num-select 500
 ```
 
+### Interactive ONNX demo
+
+`demo_lineae.py` runs a LINEAE ONNX model on one image, an image directory, a video, or a camera index. It uses the fixed input size and top-k dimensions exposed by the ONNX model itself and does not require or inspect an export report. The variant is normally inferred from a filename containing `lineae_<variant>`; specify `--variant` for a custom filename. A/F/P/N use the LINEA mean/std, while S/M/L/X/XL use ImageNet mean/std. All inputs follow the training contract: OpenCV decode with EXIF orientation ignored for still images, BGR-to-RGB conversion, `INTER_LINEAR` resize, RGB/NCHW/float32 conversion, and normalization.
+
+```bash
+uv run --locked --extra export python demo_lineae.py \
+--input data/wireframe_processed/val2017/00380861.png \
+--model outputs/lineae_xl-full-unfreeze-seed42/lineae_xl_1x3x640x640_1100.onnx \
+--execution-provider cuda \
+--score-threshold 0.4 \
+--max-lines 100 \
+--disable-display
+```
+
+- USBcam
+```bash
+uv run --locked --extra export python demo_lineae.py \
+--input 0 \
+--model outputs/lineae_xl-full-unfreeze-seed42/lineae_xl_1x3x640x640_1100.onnx \
+--execution-provider tensorrt \
+--score-threshold 0.2 \
+--max-lines 1100
+```
+
+The script applies sigmoid to class-0 logits, converts normalized `[x1,y1,x2,y2]` predictions back to the source image dimensions, and renders the highest-scoring threshold-passing lines. `--max-lines` limits drawing only; the ONNX graph still computes the top-k embedded by `tools/export_onnx.py`. Results default to `output/demo_lineae/`. Use `--execution-provider cpu` or `tensorrt` as needed and `--disable-save` for display-only operation. TensorRT execution always sets `trt_engine_cache_path` to the selected ONNX model's directory, so its generated engine cache is stored beside that model.
+
 ## Licensing
 
 LINEAE is distributed under the root [Apache License 2.0](LICENSE).
