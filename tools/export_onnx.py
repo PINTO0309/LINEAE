@@ -16,6 +16,7 @@ from main import create
 from models.lineae.backbones.base import unwrap_state_dict
 from models.lineae.linea_utils import select_top_line_predictions
 from tools.deployment_parity import compare_line_sets
+from util.deployment import resolve_num_select
 from util.experiment import sha256_file
 from util.onnx_runtime import create_ort_session
 from util.slconfig import SLConfig
@@ -36,6 +37,12 @@ class ExportWrapper(nn.Module):
 
 def export_and_verify(args) -> dict:
     config = SLConfig.fromfile(args.config)
+    num_select_override = getattr(args, "num_select", None)
+    num_select = resolve_num_select(
+        config.num_select,
+        config.num_queries,
+        num_select_override,
+    )
     spatial_size = args.spatial_size
     if spatial_size is None:
         configured = config.eval_spatial_size
@@ -51,7 +58,7 @@ def export_and_verify(args) -> dict:
         checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
         model.load_state_dict(unwrap_state_dict(checkpoint), strict=True)
     model.eval()
-    wrapper = ExportWrapper(model, config.num_select).eval()
+    wrapper = ExportWrapper(model, num_select).eval()
     generator = torch.Generator().manual_seed(args.seed)
     images = torch.randn(1, 3, spatial_size, spatial_size, generator=generator)
 
@@ -110,7 +117,9 @@ def export_and_verify(args) -> dict:
         "deploy_mode": True,
         "seed": args.seed,
         "input_shape": list(images.shape),
-        "num_select": int(config.num_select),
+        "num_select": num_select,
+        "configured_num_select": int(config.num_select),
+        "num_select_source": "cli" if num_select_override is not None else "config",
         "output_shapes": {
             "pred_logits": list(reference_logits.shape),
             "pred_lines": list(reference_lines.shape),
@@ -136,6 +145,13 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--report", type=Path)
     parser.add_argument("--spatial-size", type=int)
+    parser.add_argument(
+        "--num-select",
+        "--topk",
+        dest="num_select",
+        type=int,
+        help="number of top-scoring line queries embedded in the ONNX outputs; defaults to config.num_select",
+    )
     parser.add_argument("--opset", type=int, default=17)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--atol", type=float, default=1e-4)

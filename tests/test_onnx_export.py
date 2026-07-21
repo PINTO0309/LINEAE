@@ -7,8 +7,18 @@ import torch
 from main import create
 from tools.deployment_parity import compare_line_sets
 from tools.export_onnx import ExportWrapper
+from util.deployment import resolve_num_select
 from util.onnx_runtime import create_ort_session
 from util.slconfig import SLConfig
+
+
+def test_deployment_num_select_accepts_cli_override_and_validates_query_count():
+    assert resolve_num_select(300, 1100) == 300
+    assert resolve_num_select(300, 1100, 500) == 500
+    with pytest.raises(ValueError, match="num_select must be in"):
+        resolve_num_select(300, 1100, 0)
+    with pytest.raises(ValueError, match="num_select must be in"):
+        resolve_num_select(300, 1100, 1101)
 
 
 @pytest.mark.parametrize("variant", ["A", "S", "X"])

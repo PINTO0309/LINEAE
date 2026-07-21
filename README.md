@@ -355,7 +355,18 @@ Online-teacher training cost can be measured without starting a full run using `
 
 ## Measurement and deployment
 
-`tools/benchmark.py` first applies LINEA's fused deploy conversion, then records FLOPs/MACs, parameters, peak memory, raw samples, and batch-1 p50/p95 Torch latency. `tools/export_onnx.py` exports the same fused model and performs set-aware ONNX parity after ONNX simplification by default (`--disable-onnxsim` is available for diagnosis). CUDA ORT runs disable TF32 and CPU execution-provider fallback so a nominal GPU run cannot silently become a CPU run. `tools/benchmark_tensorrt.py` builds with TF32 disabled, measures the engine, and gates its actual FP16 outputs against ONNX Runtime using the same query/endpoint-order-invariant comparison. `tools/evaluate_onnx.py` additionally enforces full-dataset sAP5/10/15 parity against the hash-matched PyTorch evaluation before TensorRT benchmarking. `tools/analyze_pareto.py` identifies non-dominated variants, and `tools/generate_model_card.py` turns archived reports into model cards. It requires a hash-matched Pareto report and refuses to label a dominated model as a qualified candidate.
+`tools/benchmark.py` first applies LINEA's fused deploy conversion, then records FLOPs/MACs, parameters, peak memory, raw samples, and batch-1 p50/p95 Torch latency. `tools/export_onnx.py` exports the same fused model and performs set-aware ONNX parity after ONNX simplification by default (`--disable-onnxsim` is available for diagnosis). The exported top-k defaults to the config's `num_select`, but `--num-select K` (or its `--topk K` alias) embeds any validated `1 <= K <= num_queries` value into the fixed ONNX output shapes and records the effective and configured values in the parity report. CUDA ORT runs disable TF32 and CPU execution-provider fallback so a nominal GPU run cannot silently become a CPU run. `tools/benchmark_tensorrt.py` builds with TF32 disabled, measures the engine, and gates its actual FP16 outputs against ONNX Runtime using the same query/endpoint-order-invariant comparison. `tools/evaluate_onnx.py` additionally enforces full-dataset deployment sAP5/10/15 parity against the hash-matched PyTorch evaluation before TensorRT benchmarking. For a custom export top-k, create the PyTorch report with the same `tools/evaluate_checkpoint.py --num-select K`; `tools/evaluate_onnx.py` reads K from the hash-bound export report. `tools/analyze_pareto.py` identifies non-dominated variants, and `tools/generate_model_card.py` turns archived reports into model cards. It requires a hash-matched Pareto report and refuses to label a dominated model as a qualified candidate.
+
+For example, this exports XL with 500 retained line queries without changing its training config:
+
+```bash
+uv run --locked python tools/export_onnx.py \
+-c configs/lineae/lineae_xl.py \
+--checkpoint outputs/lineae_xl-full-unfreeze-seed42/checkpoint_best.pth \
+--output outputs/onnx/lineae_xl-top500.onnx \
+--num-select 500 \
+--cuda-ort
+```
 
 ## Licensing
 

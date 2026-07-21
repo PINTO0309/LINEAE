@@ -18,6 +18,7 @@ from datasets import (
 from engine import test
 from main import create
 from models.lineae.backbones.base import unwrap_state_dict
+from util.deployment import resolve_num_select
 from util.experiment import sha256_file
 from util.slconfig import SLConfig
 
@@ -36,6 +37,11 @@ def evaluate(args) -> dict:
     if not checkpoint_path.is_file():
         raise FileNotFoundError(f"checkpoint not found: {checkpoint_path}")
     config = SLConfig.fromfile(args.config)
+    num_select = resolve_num_select(
+        config.num_select,
+        config.num_queries,
+        getattr(args, "num_select", None),
+    )
     config.pretrained = False
     config.amp = args.amp
     config.batch_size_val = args.batch_size
@@ -63,7 +69,7 @@ def evaluate(args) -> dict:
             model,
             criterion,
             postprocessors,
-            DualLineEvaluator(deploy_max_predictions=config.num_select),
+            DualLineEvaluator(deploy_max_predictions=num_select),
             loader,
             device,
             str(args.output.parent),
@@ -84,7 +90,8 @@ def evaluate(args) -> dict:
         "device": str(device),
         "amp": args.amp,
         "batch_size": args.batch_size,
-        "num_select": int(config.num_select),
+        "num_select": num_select,
+        "configured_num_select": int(config.num_select),
         "num_queries": int(config.num_queries),
         "sap_protocol": SAP_EVALUATION_PROTOCOL,
         "datasets": results,
@@ -109,6 +116,13 @@ def main() -> None:
     parser.add_argument("--amp", action="store_true")
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument(
+        "--num-select",
+        "--topk",
+        dest="num_select",
+        type=int,
+        help="deployment top-k used in the report; defaults to config.num_select",
+    )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     print(json.dumps(evaluate(args), indent=2))

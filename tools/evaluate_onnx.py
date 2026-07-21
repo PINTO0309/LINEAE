@@ -15,6 +15,7 @@ from util.artifact_validation import (
     validate_evaluation_report,
     validate_onnx_export_report,
 )
+from util.deployment import resolve_num_select
 from util.experiment import sha256_file
 from util.onnx_runtime import create_ort_session
 from util.slconfig import SLConfig
@@ -82,8 +83,11 @@ def evaluate(args) -> dict:
     expected_config = str(Path(args.config).resolve())
     if export_report.get("config") != expected_config:
         raise ValueError("ONNX model was exported with a different config")
-    if export_report.get("num_select") != int(config.num_select):
-        raise ValueError("ONNX model was exported with a different num_select")
+    num_select = resolve_num_select(
+        config.num_select,
+        config.num_queries,
+        export_report.get("num_select"),
+    )
     input_shape = export_report.get("input_shape")
     if not isinstance(input_shape, list) or len(input_shape) != 4 or input_shape[0] != 1:
         raise ValueError("ONNX export must have a fixed batch-one input shape")
@@ -114,7 +118,7 @@ def evaluate(args) -> dict:
             collate_fn=BatchImageCollateFunction(base_size=spatial_size),
             num_workers=args.num_workers,
         )
-        evaluator = LineEvaluator(max_predictions=config.num_select)
+        evaluator = LineEvaluator(max_predictions=num_select)
         for samples, targets in loader:
             logits, lines = session.run(None, {input_name: samples.numpy()})
             outputs = {
@@ -140,7 +144,8 @@ def evaluate(args) -> dict:
         "onnx": str(onnx_path.resolve()),
         "onnx_sha256": sha256_file(onnx_path),
         "checkpoint_sha256": export_report.get("checkpoint_sha256"),
-        "num_select": int(config.num_select),
+        "num_select": num_select,
+        "configured_num_select": int(config.num_select),
         "sap_protocol": "deployment_topk",
         "available_providers": available_providers,
         "requested_providers": requested_providers,
