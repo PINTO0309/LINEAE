@@ -39,3 +39,26 @@ def test_prepare_for_cdn_inference_returns_no_queries():
         label_enc=torch.nn.Embedding(1, 16),
     )
     assert result == (None, None, None, None)
+
+
+def test_prepare_for_cdn_zero_line_noise_preserves_target_segments():
+    target_line = torch.tensor([[0.1, 0.2, 0.8, 0.9]], dtype=torch.float32)
+    targets = [{"labels": torch.tensor([0]), "lines": target_line}]
+
+    _, query_lines, _, metadata = prepare_for_cdn(
+        (targets, 2, 0.0, 0.0),
+        training=True,
+        num_queries=10,
+        num_classes=1,
+        hidden_dim=8,
+        label_enc=torch.nn.Embedding(1, 8),
+    )
+
+    decoded_lines = query_lines.sigmoid()[0, :metadata["pad_size"]]
+    target_lines = target_line.expand_as(decoded_lines)
+    swapped_target_lines = target_lines[..., [2, 3, 0, 1]]
+    endpoint_error = torch.minimum(
+        (decoded_lines - target_lines).abs().sum(dim=-1),
+        (decoded_lines - swapped_target_lines).abs().sum(dim=-1),
+    )
+    assert torch.allclose(endpoint_error, torch.zeros_like(endpoint_error))

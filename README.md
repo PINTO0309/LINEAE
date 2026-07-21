@@ -37,7 +37,7 @@ The following exact counts are produced from each committed default config with 
 
 The defaults are capacity-aware starting estimates, not empirically established optima. Wireframe train contains 5,000 images, so the committed single-GPU batch-8 profile performs 625 optimizer steps per epoch. Every full recipe applies cosine LR decay to `1e-7` over its complete optimizer-step horizon and selects `checkpoint_best.pth` by validation sAP10.
 
-The estimates combine three reference anchors. The original N recipe supplies N's 72 epochs. There are no A/F/P measurements, so their no-KD values conservatively multiply the reference 60/55/50 KD ladder by 1.2, producing 72/66/60. The DINO no-KD values follow the reference 45/45/40/35 trend for S/M/L/X. XL uses 36 rather than the shorter reference value of 20 because LINEAE does not fully unfreeze its 12-block backbone until epoch 25, leaving 11 fully unfrozen epochs for the accuracy-priority teacher. Direct-XL KD uses the 60/55/50/50/40/40/30/30 A-through-X capacity ladder. Its `T=1 -> 4` schedule is resolved over each recipe's actual optimizer-step horizon.
+The estimates combine three reference anchors. The original N recipe supplies N's 72 epochs. There are no A/F/P measurements, so their no-KD values conservatively multiply the reference 60/55/50 KD ladder by 1.2, producing 72/66/60. The DINO no-KD values follow the reference 45/45/40/35 trend for S/M/L/X. XL uses 36 rather than the shorter reference value of 20 because LINEAE does not fully unfreeze its 12-block backbone until epoch 23, leaving 13 fully unfrozen epochs for the accuracy-priority teacher. Direct-XL KD uses the 60/55/50/50/40/40/30/30 A-through-X capacity ladder. Its `T=1 -> 4` schedule is resolved over each recipe's actual optimizer-step horizon.
 
 | Variant | No-distillation config | Epochs | Steps | Direct-XL distillation config | Epochs | Steps |
 | --- | --- | --: | --: | --- | --: | --: |
@@ -65,41 +65,40 @@ LAB (`LearnableAffineBlock`) applies a learned scalar scale and bias after an ac
 | N | enabled | 30 | 60 | all HGNet stages trainable from epoch 0 |
 | S / M / L / X / XL | not applicable | 0 | 0 | progressive 12-block DINO schedule |
 
-Progressive unfreezing is implemented for every DINO recipe. Epochs 0--4 freeze the DINO core; epoch 5 enables the last two transformer blocks; one earlier block is added every two epochs (depths 3, 4, ..., 11 at epochs 7, 9, ..., 23), and all 12 blocks are trainable from epoch 25 through the recipe's final epoch. The SFP, hybrid encoder, and decoder remain trainable throughout. Optimizer groups include the initially frozen DINO parameters from construction time, so late-unfrozen parameters retain stable optimizer/DDP topology.
+Progressive unfreezing is implemented for every DINO recipe and follows the configured GazeLLE-style hold semantics. The last two transformer blocks are trainable during epochs 0--4; epoch 5 adds the next earlier block, one earlier block is then added every two epochs, and all 12 blocks are trainable from epoch 23 through the recipe's final epoch. `initial_freeze_epochs=5` therefore means “hold the initial trainable suffix for five epochs,” not “freeze the entire backbone for five epochs.” The SFP, hybrid encoder, and decoder remain trainable throughout. Optimizer groups include the initially frozen DINO parameters from construction time, so late-unfrozen parameters retain stable optimizer/DDP topology.
 
 Epoch numbers below are zero-based, matching logs and checkpoints. Block indices are also zero-based: partial fine-tuning always enables a suffix from the output side of the 12-block DINO core.
 
 | Epoch range | Trainable blocks | Trainable depth | Newly enabled at range start |
 | --- | --- | --: | --- |
-| 0–4 | none | 0/12 | none; the entire DINO core is frozen |
-| 5–6 | 10–11 | 2/12 | blocks 10 and 11 |
-| 7–8 | 9–11 | 3/12 | block 9 |
-| 9–10 | 8–11 | 4/12 | block 8 |
-| 11–12 | 7–11 | 5/12 | block 7 |
-| 13–14 | 6–11 | 6/12 | block 6 |
-| 15–16 | 5–11 | 7/12 | block 5 |
-| 17–18 | 4–11 | 8/12 | block 4 |
-| 19–20 | 3–11 | 9/12 | block 3 |
-| 21–22 | 2–11 | 10/12 | block 2 |
-| 23–24 | 1–11 | 11/12 | block 1 |
-| 25–final | 0–11 | 12/12 | block 0 and every remaining DINO-core parameter |
+| 0–4 | 10–11 | 2/12 | blocks 10 and 11 |
+| 5–6 | 9–11 | 3/12 | block 9 |
+| 7–8 | 8–11 | 4/12 | block 8 |
+| 9–10 | 7–11 | 5/12 | block 7 |
+| 11–12 | 6–11 | 6/12 | block 6 |
+| 13–14 | 5–11 | 7/12 | block 5 |
+| 15–16 | 4–11 | 8/12 | block 4 |
+| 17–18 | 3–11 | 9/12 | block 3 |
+| 19–20 | 2–11 | 10/12 | block 2 |
+| 21–22 | 1–11 | 11/12 | block 1 |
+| 23–final | 0–11 | 12/12 | block 0 and every remaining DINO-core parameter |
 
-For S/M partial stages, the class token is trainable with the selected blocks. For L/X/XL, the class token, storage tokens, and final normalization are also trainable. Patch embedding and all other core parameters remain frozen until epoch 25. SFP, encoder, and decoder parameters are outside this depth count and train from epoch 0.
+For S/M partial stages, the class token is trainable with the selected blocks. For L/X/XL, the class token, storage tokens, and final normalization are also trainable. Patch embedding and all other core parameters remain frozen until epoch 23. SFP, encoder, and decoder parameters are outside this depth count and train from epoch 0.
 
 The final fully unfrozen span differs because each recipe has a different epoch budget:
 
 | Variant/recipe | Config | Total epochs | Fully unfrozen epoch range | Fully unfrozen epochs |
 | --- | --- | --: | --- | --: |
-| S P0 probe | `configs/lineae/lineae_s.py` | 36 | 25–35 | 11 |
-| S no-KD | `configs/lineae/baselines/lineae_s.py` | 45 | 25–44 | 20 |
-| S direct-XL KD | `configs/lineae/distill/lineae_s.py` | 40 | 25–39 | 15 |
-| M no-KD | `configs/lineae/lineae_m.py` | 45 | 25–44 | 20 |
-| M direct-XL KD | `configs/lineae/distill/lineae_m.py` | 40 | 25–39 | 15 |
-| L no-KD | `configs/lineae/lineae_l.py` | 40 | 25–39 | 15 |
-| L direct-XL KD | `configs/lineae/distill/lineae_l.py` | 30 | 25–29 | 5 |
-| X no-KD | `configs/lineae/lineae_x.py` | 35 | 25–34 | 10 |
-| X direct-XL KD | `configs/lineae/distill/lineae_x.py` | 30 | 25–29 | 5 |
-| XL no-KD teacher | `configs/lineae/lineae_xl.py` | 36 | 25–35 | 11 |
+| S P0 probe | `configs/lineae/lineae_s.py` | 36 | 23–35 | 13 |
+| S no-KD | `configs/lineae/baselines/lineae_s.py` | 45 | 23–44 | 22 |
+| S direct-XL KD | `configs/lineae/distill/lineae_s.py` | 40 | 23–39 | 17 |
+| M no-KD | `configs/lineae/lineae_m.py` | 45 | 23–44 | 22 |
+| M direct-XL KD | `configs/lineae/distill/lineae_m.py` | 40 | 23–39 | 17 |
+| L no-KD | `configs/lineae/lineae_l.py` | 40 | 23–39 | 17 |
+| L direct-XL KD | `configs/lineae/distill/lineae_l.py` | 30 | 23–29 | 7 |
+| X no-KD | `configs/lineae/lineae_x.py` | 35 | 23–34 | 12 |
+| X direct-XL KD | `configs/lineae/distill/lineae_x.py` | 30 | 23–29 | 7 |
+| XL no-KD teacher | `configs/lineae/lineae_xl.py` | 36 | 23–35 | 13 |
 
 X-teacher cascade and tuning configs inherit the corresponding direct-XL KD schedule. The XL EMA and photometric ablations inherit the normal XL schedule. `configs/lineae/ablations/lineae_xl_frozen.py` is the explicit exception: it disables progressive unfreezing and keeps the entire DINO core frozen for all 36 epochs.
 
@@ -217,7 +216,7 @@ Training applies the same geometry-aware pipeline to no-KD and KD runs, and the 
 | Color | LINEA `ColorJitter` always varies brightness, contrast, saturation, and hue in random order (`0.4` magnitude each). |
 | Tensor/normalize | Convert to tensor, then use LINEA mean/std for A/F/P/N and ImageNet mean/std for S/M/L/X/XL. |
 | Batch multi-scale | Full recipes resize each assembled batch to a token-safe random size around 75--125% of the base input, with the base size weighted four times. The S P0 probe alone disables this; full S no-KD/KD enables it. |
-| Denoising queries | Training adds 300 model-side denoising queries with line noise scale `1.0` and label-noise ratio `0.5`; validation/inference does not. |
+| Denoising queries | Training adds 300 model-side denoising queries with line noise scale `1.0` and label-noise ratio `0.5`; validation/inference does not. Endpoint noise is additive around each target segment, and a zero line-noise scale is guaranteed to reproduce the same undirected target segment. |
 | Validation/test | Deterministic resize to the configured input followed by the same variant normalization; no random augmentation. |
 
 `use_photometric_distort=True` is an explicit ablation, not a default. It replaces the LINEA `ColorJitter` with the Gazelle-derived image-only photometric distortion at probability 0.5 while leaving line geometry unchanged.
@@ -230,7 +229,7 @@ Parquet can help when metadata filtering or remote columnar analytics dominates,
 
 ## XL teacher workflow
 
-Train XL supervised first. The recommended single-96-GB-GPU recipe is batch 8, no accumulation, 36 epochs, cosine LR, AMP, eight workers, seed 42, and the progressive schedule documented above. The 36-epoch LR horizon is calibrated to 625 optimizer updates per epoch and 22,500 updates in total; increasing `batch_size_train` does not automatically scale either LR, so batch 64 would provide only 78 updates per epoch and 2,808 updates in total and is not the committed teacher recipe. Increase `batch_size_val` independently when it fits, and disable activation checkpointing to trade spare VRAM for training speed without changing optimization semantics:
+Train XL supervised first. The recommended single-96-GB-GPU recipe is batch 8, no accumulation, 36 epochs, cosine LR, AMP, eight workers, seed 42, and the progressive schedule documented above. The 36-epoch LR horizon is calibrated to 625 optimizer updates per epoch and 22,500 updates in total; increasing `batch_size_train` does not automatically scale either LR, so batch 64 would provide only 78 updates per epoch and 2,808 updates in total and is not the committed teacher recipe. Increase `batch_size_val` independently when it fits. Disabling activation checkpointing trades spare VRAM for training speed without changing optimization semantics.
 
 Warmup remains disabled by default. When an experiment explicitly sets `use_warmup=True`, `warmup_iters` is now contained within the fixed optimizer-step horizon: the downstream cosine duration is shortened by the warmup interval and still reaches `min_lr` at the final checkpoint. For the batch-8 XL horizon, `warmup_iters=3125` means five warmup epochs inside the same 22,500 total updates, not five additional epochs. Invalid warmup durations that consume the entire run fail before training.
 
@@ -243,15 +242,11 @@ uv run --locked python main.py \
 --num_workers 8 \
 --seed 42 \
 --options \
-output_dir=outputs/lineae_xl-full-unfreeze-seed42 \
+output_dir=outputs/lineae_xl-seed42 \
 batch_size_train=8 \
 batch_size_val=64 \
 epochs=36 \
 gradient_accumulation_steps=1 \
-progressive_unfreeze=False \
-backbone_trainable_layers=0 \
-initial_freeze_epochs=0 \
-unfreeze_interval=0 \
 use_checkpoint=False
 ```
 
@@ -265,23 +260,21 @@ uv run --locked python main.py \
 --amp \
 --num_workers 8 \
 --seed 42 \
---resume outputs/lineae_xl-full-unfreeze-seed42/checkpoint.pth \
+--resume outputs/lineae_xl-seed42/checkpoint.pth \
 --options \
-output_dir=outputs/lineae_xl-full-unfreeze-seed42 \
+output_dir=outputs/lineae_xl-seed42 \
 batch_size_train=8 \
 batch_size_val=64 \
 epochs=36 \
 gradient_accumulation_steps=1 \
-progressive_unfreeze=False \
-backbone_trainable_layers=0 \
-initial_freeze_epochs=0 \
-unfreeze_interval=0 \
 use_checkpoint=False
 ```
 
 `checkpoint.pth` is the atomic latest full-state checkpoint and resumes at the epoch after its saved completed epoch. The model, AdamW, cosine scheduler, GradScaler, progressive-unfreeze position, best metric/epoch, global optimizer step, and all RNG states are restored. A checkpoint saved after epoch 35 has already completed the 36-epoch recipe and therefore has no remaining training work; `--resume` does not extend the schedule.
 
-To disable progressive unfreezing and train the entire XL DINO core from epoch 0, start a separate run with all four unfreeze controls overridden:
+Do not resume training from a checkpoint created before the `endpoint_offset_v2` denoising correction. The inherited line-noise expression did not preserve the target even when its noise scale was zero and made the six decoder denoising line losses dominate while ordinary line regression remained nearly flat. Such training resumes are now rejected explicitly; eval-only loading remains possible because denoising is inactive during validation. Restart training from the configured DINOv3 initialization weights in a new output directory. In the observed full-unfreeze XL run, epochs 0--7 reduced weighted classification loss from about `0.138` to `0.084`, but weighted validation line loss stayed at about `0.980` and official sAP10 stayed near `0.5%`; this is a stalled localization run, not evidence that the same trajectory merely needs more than 36 epochs.
+
+To disable progressive unfreezing and train the entire XL DINO core from epoch 0, start a separate diagnostic run with all four unfreeze controls overridden:
 
 ```bash
 uv run --locked python main.py \
@@ -295,13 +288,13 @@ progressive_unfreeze=False backbone_trainable_layers=0 \
 initial_freeze_epochs=0 unfreeze_interval=0
 ```
 
-In LINEAE, `backbone_trainable_layers=0` means all backbone blocks, while `-1` means none. Setting only `progressive_unfreeze=False` would leave the initial final two blocks trainable for the entire run instead of enabling all 12. Full unfreezing allocates backbone gradients and AdamW state from the beginning, so its peak VRAM is higher than the default recipe's early frozen epochs. It is a separate training recipe and cannot resume a checkpoint created with the progressive settings; keep the distinct `output_dir` shown above. Activation checkpointing remains enabled through the inherited `use_checkpoint=True` setting.
+In LINEAE, `backbone_trainable_layers=0` means all backbone blocks, while `-1` means none. Setting only `progressive_unfreeze=False` leaves the final two blocks trainable for the entire run instead of enabling all 12. Immediate full unfreezing is not the recommended teacher recipe: it exposes the whole pretrained core to an initially random detection head and can destabilize or erase useful pretrained features. It also allocates backbone gradients and AdamW state from the beginning, so its peak VRAM is higher. This is a separate training recipe and cannot resume a checkpoint created with the progressive settings; keep the distinct `output_dir` shown above. Activation checkpointing remains enabled through the inherited `use_checkpoint=True` setting unless explicitly overridden.
 
 Evaluate both the candidate and the reproduced baseline on both datasets with `tools/evaluate_checkpoint.py`. Then promote only an XL candidate whose recorded Wireframe sAP10 beats the baseline:
 
 ```bash
 python tools/qualify_teacher.py \
---candidate outputs/lineae_xl/checkpoint_best.pth \
+--candidate outputs/lineae_xl-seed42/checkpoint_best.pth \
 --candidate-metrics outputs/evaluations/lineae_xl.json \
 --baseline-checkpoint outputs/linea_hgnetv2_n/checkpoint_best.pth \
 --baseline-metrics outputs/evaluations/linea_hgnetv2_n.json
@@ -362,7 +355,7 @@ For example, this exports XL with 500 retained line queries without changing its
 ```bash
 uv run --locked python tools/export_onnx.py \
 -c configs/lineae/lineae_xl.py \
---checkpoint outputs/lineae_xl-full-unfreeze-seed42/checkpoint_best.pth \
+--checkpoint outputs/lineae_xl-seed42/checkpoint_best.pth \
 --output outputs/onnx/lineae_xl-top500.onnx \
 --num-select 500 \
 --cuda-ort

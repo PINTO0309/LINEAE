@@ -14,17 +14,24 @@ def trainable_depth_for_epoch(
     unfreeze_interval: int,
     progressive: bool,
 ) -> int:
+    """Return the trainable suffix depth for a zero-based epoch.
+
+    ``initial_freeze_epochs`` follows the GazeLLE convention: it is the hold
+    period for ``initial_depth``, not a period in which the entire backbone is
+    frozen.  This lets the task head and the last pretrained blocks adapt
+    together before progressively exposing earlier blocks.
+    """
     if total_blocks <= 0:
         return 0
-    if progressive and initial_freeze_epochs > 0 and epoch < initial_freeze_epochs:
-        return -1
     if initial_depth < 0:
         return -1
     if initial_depth == 0 or initial_depth >= total_blocks:
         return total_blocks
     if not progressive or unfreeze_interval <= 0:
         return initial_depth
-    additions = (epoch - initial_freeze_epochs) // unfreeze_interval
+    if epoch < initial_freeze_epochs:
+        return initial_depth
+    additions = (epoch - initial_freeze_epochs) // unfreeze_interval + 1
     return min(total_blocks, initial_depth + additions)
 
 

@@ -72,16 +72,12 @@ def prepare_for_cdn(dn_args, training, num_queries, num_classes, hidden_dim, lab
         positive_idx = positive_idx.flatten()
         negative_idx = positive_idx + len(lines)
 
-        
-        known_lines_ = known_lines.clone()
-        known_lines_[:, :2] = (known_lines[:, :2] - known_lines[:, 2:]) / 2
-        known_lines_[:, 2:] = (known_lines[:, :2] + known_lines[:, 2:]) / 2
-
-        centers = torch.zeros_like(known_lines)
-        centers[:, :2] = (known_lines_[:, :2] + known_lines_[:, 2:]) / 2
-        centers[:, 2:] = (known_lines_[:, :2] + known_lines_[:, 2:]) / 2
-
-        # Noisy length
+        # Perturb each endpoint along the segment direction.  The inherited
+        # LINEA expression rebuilt both endpoints around ``first_endpoint / 2``;
+        # even with a zero noise scale it therefore replaced every target line
+        # with a zero-length point.  Denoising noise must be additive so that a
+        # zero scale is the identity and positive queries stay centred on their
+        # corresponding target segment.
         diff = torch.zeros_like(known_lines)
         diff[:, :2] = (known_lines[:, 2:] -  known_lines[:, :2]) / 2
         diff[:, 2:] = (known_lines[:, 2:] -  known_lines[:, :2]) / 2
@@ -91,7 +87,7 @@ def prepare_for_cdn(dn_args, training, num_queries, num_classes, hidden_dim, lab
         rand_part[negative_idx] += 1.2 
         rand_part *= rand_sign
 
-        known_lines_ = centers + torch.mul(
+        known_lines_ = known_lines + torch.mul(
             rand_part.repeat_interleave(2, 1), diff
         ) * box_noise_scale
 
@@ -176,5 +172,4 @@ def dn_post_process(outputs_class, outputs_coord, dn_meta, aux_loss, _set_aux_lo
             out['pre_outputs'] = {'pred_logits':output_known_class[0], 'pred_lines': output_known_coord[0]}
         dn_meta['output_known_lbs_lines'] = out
     return outputs_class, outputs_coord
-
 

@@ -630,6 +630,17 @@ def main(args):
                     'automatically scaled; convergence and recipe comparability '
                     'are not preserved.'
                 )
+            if (
+                str(getattr(args, 'backbone', '')).startswith('dinov3')
+                and not getattr(args, 'progressive_unfreeze', False)
+                and int(getattr(args, 'backbone_trainable_layers', 0)) == 0
+            ):
+                print(
+                    'WARNING: the entire DINOv3 core is trainable from epoch 0. '
+                    'This is a diagnostic recipe and may destabilize pretrained '
+                    'features; the committed teacher recipe uses progressive '
+                    'unfreezing.'
+                )
     else:
         args.optimizer_steps_per_epoch = 1
     args.distill_temperature_steps_resolved = None

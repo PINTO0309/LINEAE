@@ -472,10 +472,10 @@ def test_readme_documents_exact_xl_resume_command():
     )[0]
     assert "-c configs/lineae/lineae_xl.py" in xl_workflow
     assert (
-        "--resume outputs/lineae_xl-full-unfreeze-seed42/checkpoint.pth"
+        "--resume outputs/lineae_xl-seed42/checkpoint.pth"
         in xl_workflow
     )
-    assert "output_dir=outputs/lineae_xl-full-unfreeze-seed42" in xl_workflow
+    assert "output_dir=outputs/lineae_xl-seed42" in xl_workflow
     assert "batch_size_train=8" in xl_workflow
     assert "batch_size_val=64" in xl_workflow
     assert "epochs=36" in xl_workflow

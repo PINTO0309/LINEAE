@@ -273,6 +273,7 @@ def test_full_s_baseline_is_distillation_matched_but_probe_stays_one_batch():
 def test_full_lineae_recipes_restore_linea_multiscale_training(variant):
     config = SLConfig.fromfile(f"configs/lineae/lineae_{variant.lower()}.py")
     assert config.training_profile == "single_gpu_96gb"
+    assert config.recipe_reference_effective_batch_size == 8
     assert config.multi_scale_train is True
     assert config.optimizer_fused is True
 
@@ -335,19 +336,18 @@ def test_capacity_aware_epoch_budgets_match_configs_and_readme(variant):
 def test_readme_documents_complete_dino_unfreeze_schedule():
     rows = _readme_table_rows()
     expected = {
-        ("0–4", "none", "0/12", "none; the entire DINO core is frozen"),
-        ("5–6", "10–11", "2/12", "blocks 10 and 11"),
-        ("7–8", "9–11", "3/12", "block 9"),
-        ("9–10", "8–11", "4/12", "block 8"),
-        ("11–12", "7–11", "5/12", "block 7"),
-        ("13–14", "6–11", "6/12", "block 6"),
-        ("15–16", "5–11", "7/12", "block 5"),
-        ("17–18", "4–11", "8/12", "block 4"),
-        ("19–20", "3–11", "9/12", "block 3"),
-        ("21–22", "2–11", "10/12", "block 2"),
-        ("23–24", "1–11", "11/12", "block 1"),
+        ("0–4", "10–11", "2/12", "blocks 10 and 11"),
+        ("5–6", "9–11", "3/12", "block 9"),
+        ("7–8", "8–11", "4/12", "block 8"),
+        ("9–10", "7–11", "5/12", "block 7"),
+        ("11–12", "6–11", "6/12", "block 6"),
+        ("13–14", "5–11", "7/12", "block 5"),
+        ("15–16", "4–11", "8/12", "block 4"),
+        ("17–18", "3–11", "9/12", "block 3"),
+        ("19–20", "2–11", "10/12", "block 2"),
+        ("21–22", "1–11", "11/12", "block 1"),
         (
-            "25–final",
+            "23–final",
             "0–11",
             "12/12",
             "block 0 and every remaining DINO-core parameter",
@@ -377,8 +377,8 @@ def test_readme_documents_dino_recipe_fully_unfrozen_horizon(label, path):
         label,
         f"`{path}`",
         str(epochs),
-        f"25–{epochs - 1}",
-        str(epochs - 25),
+        f"23–{epochs - 1}",
+        str(epochs - 23),
     )
     assert expected_row in _readme_table_rows()
 

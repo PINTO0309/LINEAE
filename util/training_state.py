@@ -77,6 +77,7 @@ RESUME_CRITICAL_FIELDS = (
     "use_dn",
     "dn_number",
     "dn_line_noise_scale",
+    "dn_line_noise_schema",
     "dn_label_noise_ratio",
     "criterionname",
     "criterion_type",
@@ -327,6 +328,15 @@ def validate_resume_checkpoint(checkpoint: Mapping[str, Any], args: Any) -> None
     saved_config = checkpoint["config"]
     if not isinstance(saved_config, Mapping):
         raise TypeError("resume checkpoint config must be a mapping")
+    if (
+        not getattr(args, "eval", False)
+        and hasattr(args, "dn_line_noise_schema")
+        and "dn_line_noise_schema" not in saved_config
+    ):
+        raise ValueError(
+            "resume checkpoint predates the corrected denoising-line noise schema; "
+            "start a new run from the backbone initialization weights"
+        )
     if checkpoint["sampler_epoch"] != checkpoint["epoch"]:
         raise ValueError(
             "resume checkpoint sampler_epoch must match its completed epoch"

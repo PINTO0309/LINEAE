@@ -525,10 +525,10 @@ def test_progressive_unfreeze_schedule_boundaries():
         )
         for epoch in range(10)
     ]
-    assert values == [-1, -1, -1, -1, -1, 2, 2, 3, 3, 4]
+    assert values == [2, 2, 2, 2, 2, 3, 3, 4, 4, 5]
 
 
-def test_resume_epoch_crosses_from_frozen_warmup_to_initial_depth():
+def test_initial_freeze_boundary_adds_first_progressive_block():
     saved_epoch = 4
     resumed_epoch = saved_epoch + 1
     depth = trainable_depth_for_epoch(
@@ -539,7 +539,7 @@ def test_resume_epoch_crosses_from_frozen_warmup_to_initial_depth():
         unfreeze_interval=2,
         progressive=True,
     )
-    assert depth == 2
+    assert depth == 3
 
 
 def test_nonprogressive_negative_depth_keeps_entire_backbone_frozen():
@@ -603,6 +603,19 @@ def test_resume_validation_covers_training_semantics_and_normalizes_sequences():
         validate_resume_checkpoint(checkpoint, args)
 
 
+def test_resume_rejects_checkpoint_before_corrected_dn_noise_schema():
+    args = SimpleNamespace(dn_line_noise_schema="endpoint_offset_v2")
+    checkpoint = _resume_checkpoint_stub(config={})
+
+    with pytest.raises(ValueError, match="denoising-line noise schema"):
+        validate_resume_checkpoint(checkpoint, args)
+
+
+def test_eval_can_load_checkpoint_before_corrected_dn_noise_schema():
+    args = SimpleNamespace(dn_line_noise_schema="endpoint_offset_v2", eval=True)
+    validate_resume_checkpoint(_resume_checkpoint_stub(config={}), args)
+
+
 
 @pytest.mark.parametrize(
     ("field", "saved", "changed"),
@@ -656,10 +669,10 @@ def test_all_dino_training_recipes_reach_full_unfreeze_before_training_ends():
             for epoch in range(config.epochs)
         ]
 
-        assert schedule[:5] == [-1] * 5
-        assert schedule[5] == 2
-        assert config.epochs > 25
-        assert schedule[25:] == [12] * (config.epochs - 25)
+        assert schedule[:5] == [2] * 5
+        assert schedule[5:7] == [3] * 2
+        assert config.epochs > 23
+        assert schedule[23:] == [12] * (config.epochs - 23)
 
 
 def test_ema_updates_resume_and_selects_inference_weights(tmp_path):

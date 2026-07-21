@@ -49,6 +49,8 @@ use_dn = True
 dn_number = 300
 dn_line_noise_scale = 1.0
 dn_label_noise_ratio = 0.5
+# Checkpoint compatibility marker for the additive endpoint-noise correction.
+dn_line_noise_schema = 'endpoint_offset_v2'
 embed_init_tgt = True
 dn_labelbook_size = 2
 match_unstable_error = True
