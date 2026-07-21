@@ -26,6 +26,18 @@ DEPLOY_PARAMETER_COUNTS = {
     "XL": (88_423_936, 8_083_770, 96_507_706),
 }
 
+DEPLOY_GFLOPS = {
+    "A": 2.5,
+    "F": 4.7,
+    "P": 10.8,
+    "N": 11.7,
+    "S": 39.2,
+    "M": 55.5,
+    "L": 94.5,
+    "X": 121.2,
+    "XL": 306.3,
+}
+
 LAB_MODULE_COUNTS = {"A": 20, "F": 20, "P": 25, "N": 30}
 
 NO_KD_EPOCHS = {
@@ -104,6 +116,7 @@ def test_readme_deploy_parameter_and_lab_inventory_matches_models(variant):
         f"{backbone / 1_000_000:.1f}",
         f"{after_backbone / 1_000_000:.1f}",
         f"{total / 1_000_000:.1f}",
+        f"{DEPLOY_GFLOPS[variant]:.1f}",
     )
     assert expected_row in _readme_table_rows()
 

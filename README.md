@@ -19,19 +19,19 @@ The authoritative mapping, including exact bootstrap filenames, is in `models/li
 
 The following exact counts are produced from each committed default config with pretrained loading disabled and after `model.deploy()`, matching the graph used by the Torch/ONNX/TensorRT benchmarks. `Backbone` means `model.backbone`: for DINO variants it includes the Simple Feature Pyramid (SFP), and for A/F/P it includes the efficient synthetic P5. `After backbone` is the hybrid encoder plus decoder. Default output-KD adds no student parameters; optional feature-KD projections are training-only and are removed by `deploy()`.
 
-| Variant | Backbone (M) | After backbone (M) | Total (M) |
-| ------- | -----------: | -----------------: | --------: |
-| A       |          0.3 |                1.6 |       1.9 |
-| F       |          0.7 |                1.9 |       2.6 |
-| P       |          1.0 |                2.0 |       3.0 |
-| N       |          1.9 |                2.1 |       3.9 |
-| S       |          6.0 |                5.9 |      11.9 |
-| M       |         10.6 |                6.7 |      17.3 |
-| L       |         23.0 |                6.7 |      29.7 |
-| X       |         30.1 |                8.1 |      38.2 |
-| XL      |         88.4 |                8.1 |      96.5 |
+| Variant | Backbone (M) | After backbone (M) | Total (M) | GFLOPs |
+| ------- | -----------: | -----------------: | --------: | -----: |
+| A       |          0.3 |                1.6 |       1.9 |    2.5 |
+| F       |          0.7 |                1.9 |       2.6 |    4.7 |
+| P       |          1.0 |                2.0 |       3.0 |   10.8 |
+| N       |          1.9 |                2.1 |       3.9 |   11.7 |
+| S       |          6.0 |                5.9 |      11.9 |   39.2 |
+| M       |         10.6 |                6.7 |      17.3 |   55.5 |
+| L       |         23.0 |                6.7 |      29.7 |   94.5 |
+| X       |         30.1 |                8.1 |      38.2 |  121.2 |
+| XL      |         88.4 |                8.1 |      96.5 |  306.3 |
 
-`M` is decimal millions (`1 M = 1,000,000` parameters); values are rounded to one decimal place while the regression test retains the exact integer counts.
+`M` is decimal millions (`1 M = 1,000,000` parameters). GFLOPs are the batch-1 forward-operation count reported by the locked `calflops` implementation after `model.deploy()` at each variant's canonical input size: 320 for A, 416 for F, and 640 for P through XL. One multiply-accumulate contributes two FLOPs, with other counted operations added separately. Values are rounded to one decimal place; GFLOPs describe graph complexity rather than measured hardware throughput, and the parameter regression test retains the exact integer counts.
 
 ### A/F/P/N scaling contract
 
