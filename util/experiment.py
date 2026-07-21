@@ -10,8 +10,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import cv2
 import torch
 
+from .image_preprocess import IMAGE_PREPROCESS_SCHEMA
 from .training_state import git_metadata
 
 
@@ -117,6 +119,10 @@ def write_experiment_records(
         "dataset": {
             "root": str(dataset_root.resolve()),
             "annotations": annotation_records,
+            "image_preprocess_schema": getattr(
+                args, "image_preprocess_schema", IMAGE_PREPROCESS_SCHEMA
+            ),
+            "opencv_version": cv2.__version__,
         },
         "checkpoints": {
             "initialization": _file_record(getattr(args, "backbone_weights", None)),
@@ -187,6 +193,7 @@ def write_experiment_records(
             "python": platform.python_version(),
             "platform": platform.platform(),
             "torch": torch.__version__,
+            "opencv": cv2.__version__,
             "cuda_runtime": torch.version.cuda,
             "cuda_available": torch.cuda.is_available(),
             "gpu": torch.cuda.get_device_name(cuda_device) if cuda_device else None,

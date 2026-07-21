@@ -75,6 +75,12 @@ nms_iou_threshold = -1
 # Validation model selection. The latest full state is always saved separately.
 selection_metric = 'sap10'
 selection_mode = 'max'
+# Render the same validation samples only when a completed epoch becomes best.
+# Set the count to zero to disable this monitoring artifact.
+validation_render_count = 10
+validation_render_keep_best = 10
+validation_render_score_threshold = 0.3
+validation_render_max_predictions = 100
 
 # Output-level line-set distillation.  A zero total weight is an exact no-KD
 # path and does not construct or run a teacher.

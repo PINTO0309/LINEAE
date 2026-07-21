@@ -11,6 +11,11 @@ from tools.plan_experiment_matrix import (
     selected_tasks,
 )
 
+_PREPROCESSING = {
+    "image_preprocess_schema": "opencv_rgb_inter_linear_v2",
+    "opencv_version": "4.13.0",
+}
+
 
 def _options(tmp_path):
     return MatrixOptions(
@@ -247,7 +252,8 @@ def test_plan_records_command_and_reports_are_bound_to_checkpoint(tmp_path):
     source.write_bytes(b"weights")
     digest = hashlib.sha256(b"weights").hexdigest()
     report_path.write_text(json.dumps({
-        "format": "lineae_evaluation_v2",
+        **_PREPROCESSING,
+        "format": "lineae_evaluation_v3",
         "config": str(Path("configs/lineae/lineae_s.py").resolve()),
         "checkpoint_sha256": digest,
         "num_queries": 1100,
@@ -288,7 +294,8 @@ def test_onnx_completion_requires_pinned_simplified_parity_report(tmp_path):
     model.write_bytes(b"onnx")
     parity_path = tmp_path / "model.parity.json"
     payload = {
-        "format": "lineae_onnx_export_v1",
+        **_PREPROCESSING,
+        "format": "lineae_onnx_export_v2",
         "config": "/test/config.py",
         "checkpoint_sha256": digest,
         "onnx_sha256": hashlib.sha256(b"onnx").hexdigest(),
@@ -340,7 +347,8 @@ def test_onnx_ap_completion_binds_model_torch_report_and_cuda_policy(tmp_path):
         for dataset in ("wireframe", "york")
     }
     result.write_text(json.dumps({
-        "format": "lineae_onnx_evaluation_v2",
+        **_PREPROCESSING,
+        "format": "lineae_onnx_evaluation_v3",
         "config": str(Path("configs/lineae/lineae_s.py").resolve()),
         "checkpoint_sha256": hashlib.sha256(b"checkpoint").hexdigest(),
         "onnx_sha256": hashlib.sha256(b"onnx").hexdigest(),

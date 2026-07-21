@@ -6,6 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
+import cv2
 import onnx
 import onnxruntime as ort
 import onnxsim
@@ -18,6 +19,10 @@ from models.lineae.linea_utils import select_top_line_predictions
 from tools.deployment_parity import compare_line_sets
 from util.deployment import resolve_num_select
 from util.experiment import sha256_file
+from util.image_preprocess import (
+    validate_checkpoint_image_preprocess,
+    validate_image_preprocess_schema,
+)
 from util.onnx_runtime import create_ort_session
 from util.slconfig import SLConfig
 
@@ -37,6 +42,7 @@ class ExportWrapper(nn.Module):
 
 def export_and_verify(args) -> dict:
     config = SLConfig.fromfile(args.config)
+    validate_image_preprocess_schema(config.image_preprocess_schema)
     num_select_override = getattr(args, "num_select", None)
     num_select = resolve_num_select(
         config.num_select,
@@ -56,6 +62,7 @@ def export_and_verify(args) -> dict:
     model, _ = create(config, "modelname")
     if args.checkpoint:
         checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
+        validate_checkpoint_image_preprocess(checkpoint)
         model.load_state_dict(unwrap_state_dict(checkpoint), strict=True)
     model.eval()
     wrapper = ExportWrapper(model, num_select).eval()
@@ -103,7 +110,7 @@ def export_and_verify(args) -> dict:
         max_outlier_fraction=args.max_outlier_fraction,
     )
     result = {
-        "format": "lineae_onnx_export_v1",
+        "format": "lineae_onnx_export_v2",
         "config": str(Path(args.config).resolve()),
         "checkpoint": str(Path(args.checkpoint).resolve()) if args.checkpoint else None,
         "checkpoint_sha256": sha256_file(Path(args.checkpoint)) if args.checkpoint else None,
@@ -119,6 +126,8 @@ def export_and_verify(args) -> dict:
         "input_shape": list(images.shape),
         "num_select": num_select,
         "configured_num_select": int(config.num_select),
+        "image_preprocess_schema": config.image_preprocess_schema,
+        "opencv_version": cv2.__version__,
         "num_select_source": "cli" if num_select_override is not None else "config",
         "output_shapes": {
             "pred_logits": list(reference_logits.shape),

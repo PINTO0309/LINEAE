@@ -17,6 +17,11 @@ from tools.evaluate_onnx import compare_ap, evaluate as evaluate_onnx
 from tools.plan_experiment_matrix import Task
 from util.experiment import sha256_file
 
+_PREPROCESSING = {
+    "image_preprocess_schema": "opencv_rgb_inter_linear_v2",
+    "opencv_version": "4.13.0",
+}
+
 
 def _write_json(path, payload):
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -41,7 +46,8 @@ def _datasets(sap10):
 
 def _evaluation(checkpoint_hash, sap10):
     return {
-        "format": "lineae_evaluation_v2",
+        **_PREPROCESSING,
+        "format": "lineae_evaluation_v3",
         "config": "/test/config.py",
         "checkpoint_sha256": checkpoint_hash,
         "num_queries": 1100,
@@ -53,6 +59,7 @@ def _evaluation(checkpoint_hash, sap10):
 
 def _torch_benchmark(checkpoint_hash, *, p50, peak_memory, parameters):
     return {
+        **_PREPROCESSING,
         "format": "lineae_torch_benchmark_v1",
         "config": "/test/config.py",
         "checkpoint_sha256": checkpoint_hash,
@@ -241,7 +248,8 @@ def test_model_card_requires_evaluation_torch_and_tensorrt_hash_chain(tmp_path):
     evaluation = _write_json(
         tmp_path / "evaluation.json",
         {
-            "format": "lineae_evaluation_v2",
+            **_PREPROCESSING,
+            "format": "lineae_evaluation_v3",
             "config": "/test/config.py",
             "checkpoint_sha256": checkpoint_hash,
             "num_queries": 1100,
@@ -251,6 +259,7 @@ def test_model_card_requires_evaluation_torch_and_tensorrt_hash_chain(tmp_path):
         },
     )
     torch_benchmark_payload = {
+        **_PREPROCESSING,
         "checkpoint_sha256": checkpoint_hash,
         "format": "lineae_torch_benchmark_v1",
         "config": "/test/config.py",
@@ -330,6 +339,7 @@ def test_full_dataset_onnx_ap_parity_is_hash_and_annotation_bound():
         return {
             "checkpoint_sha256": "c" * 64,
             "num_select": 300,
+            "image_preprocess_schema": "opencv_rgb_inter_linear_v2",
             "datasets": {
                 name: {
                     "annotation_sha256": annotation,
@@ -356,7 +366,8 @@ def test_onnx_evaluation_rejects_a_missing_parity_schema(tmp_path):
     parity = _write_json(
         tmp_path / "model.parity.json",
         {
-            "format": "lineae_onnx_export_v1",
+            **_PREPROCESSING,
+            "format": "lineae_onnx_export_v2",
             "config": "/test/config.py",
             "checkpoint_sha256": "a" * 64,
             "onnx_sha256": sha256_file(model),

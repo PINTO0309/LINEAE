@@ -457,14 +457,13 @@ class DistillationTeacher(nn.Module):
             self.target_spatial_size = tuple(target_spatial_size)
         self.cache = cache
         cache_transform = {
-            "schema": "lineae_teacher_preprocess_v1",
+            "schema": "lineae_teacher_preprocess_v3",
             "source_mean": self.source_mean.flatten().tolist(),
             "source_std": self.source_std.flatten().tolist(),
             "target_mean": self.target_mean.flatten().tolist(),
             "target_std": self.target_std.flatten().tolist(),
             "target_spatial_size": self.target_spatial_size,
-            "resize_mode": "bilinear",
-            "align_corners": False,
+            "resize_mode": "opencv_inter_linear_equivalent",
         }
         cache_transform_json = json.dumps(
             cache_transform,

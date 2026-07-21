@@ -73,8 +73,14 @@ class HGNetV2Backbone(LINEAEBackbone):
         self.p5 = None
         if derivative:
             last_channels = core_channels[-1]
+            # A dense C -> C 3x3 projection makes the synthetic P5 larger than
+            # HGNetV2-B0's complete native stage 4, reversing the intended
+            # A/F/P/N capacity order.  Pooling followed by a learned pointwise
+            # channel mixer preserves the P5 feature contract and is faster on
+            # small feature maps than a depthwise projection on common GPUs.
             self.p5 = nn.Sequential(
-                nn.Conv2d(last_channels, last_channels, 3, stride=2, padding=1, bias=False),
+                nn.AvgPool2d(kernel_size=2, stride=2),
+                nn.Conv2d(last_channels, last_channels, 1, bias=False),
                 nn.BatchNorm2d(last_channels),
                 nn.ReLU(inplace=True),
             )

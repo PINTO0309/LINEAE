@@ -1,5 +1,5 @@
 import torch
-from torchvision.transforms.functional import resize
+import torch.nn.functional as F
 import random
 
 # This only for printing
@@ -85,6 +85,13 @@ class BatchImageCollateFunction(BaseCollateFunction):
 
         if self.scales is not None: # and self.epoch < self.stop_epoch:
             sz = random.choice(self.scales)
-            images = resize(images, [sz, sz])
+            # Bilinear with half-pixel coordinates numerically matches OpenCV
+            # INTER_LINEAR while keeping assembled normalized batches on-device.
+            images = F.interpolate(
+                images,
+                size=(sz, sz),
+                mode="bilinear",
+                align_corners=False,
+            )
 
         return images, targets

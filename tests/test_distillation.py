@@ -2,6 +2,7 @@ import hashlib
 import json
 from types import SimpleNamespace
 
+import cv2
 import pytest
 import torch
 from scipy.optimize import linear_sum_assignment
@@ -833,6 +834,17 @@ def test_teacher_resizes_the_augmented_tensor_to_its_canonical_input():
     )
     assert core.seen.shape == (1, 3, 8, 8)
     assert torch.equal(core.seen, expected)
+    expected_opencv = cv2.resize(
+        samples[0].permute(1, 2, 0).numpy(),
+        (8, 8),
+        interpolation=cv2.INTER_LINEAR,
+    )
+    torch.testing.assert_close(
+        core.seen[0],
+        torch.from_numpy(expected_opencv).permute(2, 0, 1),
+        rtol=1e-5,
+        atol=1e-5,
+    )
 
 
 def test_teacher_rejects_invalid_canonical_input_size():

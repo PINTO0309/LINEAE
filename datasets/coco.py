@@ -11,17 +11,24 @@ import numpy as np
 
 import torch
 import torch.utils.data
-import torchvision
+from pycocotools.coco import COCO
 
 import datasets.transforms as T
+from util.image_preprocess import (
+    IMAGE_PREPROCESS_SCHEMA,
+    read_rgb_image,
+    validate_image_preprocess_schema,
+)
 
 
 __all__ = ['build']
 
 
-class CocoDetection(torchvision.datasets.CocoDetection):
+class CocoDetection(torch.utils.data.Dataset):
     def __init__(self, img_folder, ann_file, transforms, include_lmap):
-        super(CocoDetection, self).__init__(img_folder, ann_file)
+        self.root = Path(img_folder)
+        self.coco = COCO(str(ann_file))
+        self.ids = sorted(self.coco.imgs)
         self._transforms = transforms
         self.prepare = ConvertCocoPolysToMask()
 
@@ -33,9 +40,17 @@ class CocoDetection(torchvision.datasets.CocoDetection):
 
         self.include_lmap = include_lmap
 
+    def __len__(self):
+        return len(self.ids)
+
     def __getitem__(self, idx):
-        img, target = super(CocoDetection, self).__getitem__(idx)
         image_id = self.ids[idx]
+        image_record = self.coco.loadImgs([image_id])[0]
+        image_path = self.root / image_record["file_name"]
+        img = read_rgb_image(image_path)
+        annotation_ids = self.coco.getAnnIds(imgIds=[image_id])
+        annotations = self.coco.loadAnns(annotation_ids)
+        target = annotations
         target = {'image_id': image_id, 'annotations': target}
 
         if self.include_lmap:
@@ -56,7 +71,7 @@ class CocoDetection(torchvision.datasets.CocoDetection):
 class ConvertCocoPolysToMask(object):
 
     def __call__(self, image, target):
-        w, h = image.size
+        h, w = image.shape[:2]
 
         image_id = target["image_id"]
         image_id = torch.tensor([image_id])
@@ -111,6 +126,10 @@ class ConvertCocoPolysToMask(object):
 
 
 def make_coco_transforms(image_set, args=None):
+
+    validate_image_preprocess_schema(
+        getattr(args, "image_preprocess_schema", IMAGE_PREPROCESS_SCHEMA)
+    )
 
     image_mean = getattr(args, 'image_mean', [0.538, 0.494, 0.453])
     image_std = getattr(args, 'image_std', [0.257, 0.263, 0.273])

@@ -12,8 +12,10 @@ import numpy as np
 import torch
 import torch.distributed as dist
 
+from .image_preprocess import validate_checkpoint_image_preprocess
 
-CHECKPOINT_FORMAT_VERSION = 1
+
+CHECKPOINT_FORMAT_VERSION = 2
 
 REQUIRED_RESUME_FIELDS = frozenset({
     "format_version",
@@ -42,6 +44,7 @@ RESUME_CRITICAL_FIELDS = (
     "backbone_weights",
     "backbone_checkpoint_sha256",
     "backbone_pyramid_channels",
+    "synthetic_p5_schema",
     "backbone_trainable_layers",
     "use_lab",
     "freeze_norm",
@@ -94,6 +97,7 @@ RESUME_CRITICAL_FIELDS = (
     "data_aug_max_size",
     "data_aug_scales2_resize",
     "data_aug_scales2_crop",
+    "image_preprocess_schema",
     "use_lmap",
     "multi_scale_train",
     "train_multiscale_scales",
@@ -326,6 +330,7 @@ def validate_resume_checkpoint(checkpoint: Mapping[str, Any], args: Any) -> None
         raise ValueError(
             f"unsupported checkpoint format version {version}; expected {CHECKPOINT_FORMAT_VERSION}"
         )
+    validate_checkpoint_image_preprocess(checkpoint)
     saved_config = checkpoint["config"]
     if not isinstance(saved_config, Mapping):
         raise TypeError("resume checkpoint config must be a mapping")
@@ -333,9 +338,11 @@ def validate_resume_checkpoint(checkpoint: Mapping[str, Any], args: Any) -> None
         required_semantic_markers = {
             "dn_line_noise_schema": "corrected denoising-line noise",
             "endpoint_loss_schema": "non-degenerate endpoint-loss tie handling",
+            "synthetic_p5_schema": "efficient synthetic-P5 architecture",
+            "image_preprocess_schema": "OpenCV image preprocessing",
         }
         for field, description in required_semantic_markers.items():
-            if hasattr(args, field) and field not in saved_config:
+            if getattr(args, field, None) and field not in saved_config:
                 raise ValueError(
                     f"resume checkpoint predates the {description} schema; "
                     "start a new run from the backbone initialization weights"

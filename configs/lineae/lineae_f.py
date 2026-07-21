@@ -10,4 +10,7 @@ backbone_weights = _spec.checkpoint
 eval_spatial_size = (_spec.input_size, _spec.input_size)
 data_aug_scales = [(_spec.input_size, _spec.input_size)]
 in_channels_encoder = [256, 512, 512]
+dec_layers = 3
+eval_idx = 2
+num_queries = 800
 epochs = 66

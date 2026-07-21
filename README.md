@@ -17,13 +17,13 @@ The authoritative mapping, including exact bootstrap filenames, is in `models/li
 
 ## Parameter inventory
 
-The following exact counts are produced from each committed default config with pretrained loading disabled and after `model.deploy()`, matching the graph used by the Torch/ONNX/TensorRT benchmarks. `Backbone` means `model.backbone`: for DINO variants it includes the Simple Feature Pyramid (SFP), and for A/F/P it includes the learned synthetic P5. `After backbone` is the hybrid encoder plus decoder. Default output-KD adds no student parameters; optional feature-KD projections are training-only and are removed by `deploy()`.
+The following exact counts are produced from each committed default config with pretrained loading disabled and after `model.deploy()`, matching the graph used by the Torch/ONNX/TensorRT benchmarks. `Backbone` means `model.backbone`: for DINO variants it includes the Simple Feature Pyramid (SFP), and for A/F/P it includes the efficient synthetic P5. `After backbone` is the hybrid encoder plus decoder. Default output-KD adds no student parameters; optional feature-KD projections are training-only and are removed by `deploy()`.
 
 | Variant | Backbone (M) | After backbone (M) | Total (M) |
 | ------- | -----------: | -----------------: | --------: |
-| A       |          0.8 |                1.9 |       2.7 |
-| F       |          2.8 |                2.0 |       4.7 |
-| P       |          3.1 |                2.0 |       5.1 |
+| A       |          0.3 |                1.6 |       1.9 |
+| F       |          0.7 |                1.9 |       2.6 |
+| P       |          1.0 |                2.0 |       3.0 |
 | N       |          1.9 |                2.1 |       3.9 |
 | S       |          6.0 |                5.9 |      11.9 |
 | M       |         10.6 |                6.7 |      17.3 |
@@ -32,6 +32,21 @@ The following exact counts are produced from each committed default config with 
 | XL      |         88.4 |                8.1 |      96.5 |
 
 `M` is decimal millions (`1 M = 1,000,000` parameters); values are rounded to one decimal place while the regression test retains the exact integer counts.
+
+### A/F/P/N scaling contract
+
+A, F, P, and N now increase strictly in exact deploy parameter count, MACs, and the reference canonical-input latency. The old dense 3x3 A/F/P synthetic P5 alone contained up to 2.36M parameters, making P larger than N. It has been replaced by a 2x2 average downsample followed by a learned 1x1 channel mixer, BatchNorm, and ReLU. N retains HGNetV2-B0's larger native stage 4. To keep real GPU latency from being dominated by the same detector head at every small size, queries scale as 600/800/1100/1200; A additionally uses two decoder layers while F/P/N use three. All variants retain top-300 deployment output. This preserves the three-level `(stride 8, 16, 32)` feature contract while producing the intended A < F < P < N order.
+
+| Variant | Canonical input | Queries | Decoder layers | Exact parameters | MACs (G) | RTX 3070 AMP p50 (ms) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| A | 320 | 600 | 2 | 1,897,494 | 1.2191 | 14.55 |
+| F | 416 | 800 | 3 | 2,599,613 | 2.3328 | 16.92 |
+| P | 640 | 1,100 | 3 | 2,997,383 | 5.3493 | 20.00 |
+| N | 640 | 1,200 | 3 | 3,913,745 | 5.8026 | 20.75 |
+
+The latency snapshot uses the fused deploy graph, batch 1, `--amp`, top-300 selection, 100 warm-up iterations, and 500 timed iterations on one NVIDIA GeForce RTX 3070 with the locked PyTorch 2.11.0/CUDA 12.8/cuDNN 9.19 environment. MACs and parameters are architecture-level monotonic invariants; wall-clock latency is backend and hardware dependent and must be remeasured on each deployment target with `tools/benchmark.py`. The committed regression tests enforce the exact capacity structure rather than a noisy timing threshold.
+
+The B0 bootstrap file `ckpts/PPHGNetV2_B0_stage1.pth` remains valid for all four variants because A/F/P load only shape-matched HGNet core tensors and initialize the synthetic P5 locally, while N still uses the complete B0 core. Previous A/F/P/N full-model checkpoints must not be resumed into this revised scale: A/F/P changed P5 and/or detector dimensions, and N changed query count. Exact-resume validation rejects the old P5 schema and any `num_queries`, `dec_layers`, or `eval_idx` mismatch.
 
 ## Default epoch budgets
 
@@ -55,7 +70,7 @@ Steps assume the default one-GPU batch-8 profile; DDP changes steps per rank but
 
 ## LAB and backbone unfreezing
 
-LAB (`LearnableAffineBlock`) applies a learned scalar scale and bias after an activated HGNetV2 `ConvBNAct`. It is enabled for every HGNet student and is not part of DINOv3. The synthetic A/F/P P5 uses Conv-BN-ReLU without LAB.
+LAB (`LearnableAffineBlock`) applies a learned scalar scale and bias after an activated HGNetV2 `ConvBNAct`. It is enabled for every HGNet student and is not part of DINOv3. The synthetic A/F/P P5 uses average pooling and pointwise Conv-BN-ReLU without LAB.
 
 | Variant | LAB | LAB modules | LAB scalar parameters | Backbone-core schedule |
 | --- | --- | --: | --: | --- |
@@ -112,7 +127,7 @@ uv run --locked python tools/checkpoint_preflight.py
 uv run --locked pytest -q
 ```
 
-Every direct runtime, development, export, and TensorRT dependency is an exact `==` pin in `pyproject.toml`; the same direct versions are used on every supported Python minor. `uv.lock` fixes every transitive artifact and its hash; use `--locked` so setup fails instead of silently re-resolving it. Install the separately pinned TensorRT stack on the deployment host with `uv sync --locked --extra tensorrt`.
+Every direct runtime, development, export, and TensorRT dependency is an exact `==` pin in `pyproject.toml`; the same direct versions are used on every supported Python minor. Image processing uses the GUI-enabled `opencv-python==4.13.0.92`; Pillow and torchvision are not runtime or transitive dependencies. `uv.lock` fixes every transitive artifact and its hash; use `--locked` so setup fails instead of silently re-resolving it. Install the separately pinned TensorRT stack on the deployment host with `uv sync --locked --extra tensorrt`.
 
 The preflight validates all six bootstrap files in `ckpts/` by SHA-256, tensor count, width, and depth. It never downloads missing weights.
 
@@ -169,7 +184,17 @@ Validation scalars use the zero-based epoch number as their x-axis and are norma
 | `Test/deploy_sap10` | Deployment structural average precision at threshold 10 after retaining only the class-0 top `num_select` predictions. |
 | `Test/deploy_sap15` | Deployment structural average precision at threshold 15 after retaining only the class-0 top `num_select` predictions. |
 
-Console/JSONL-only diagnostics are not silently represented in TensorBoard: epoch-averaged training meters, AMP overflow counts, KD cache hits/misses/writes, peak CUDA memory, epoch duration, parameter count, best epoch/metric, and detailed profiling timings remain in stdout, `log.txt`, manifests, or dedicated profiling reports.
+### Best-epoch validation renders
+
+After a completed training epoch improves `selection_metric`, rank 0 uses the same normally selected or EMA evaluation model to render the first 10 validation samples. Each PNG shows every ground-truth line in green on the left and class-0 predictions in red on the right. Predictions must have score at least `0.3` and are limited to the best 100 lines. The fixed sample order makes changes directly comparable between best epochs. Ordinary non-best epochs, partial epochs, `--skip_eval`, and standalone `--eval` do not render images.
+
+Images are written atomically to `outputs/<run>/validation_renders/best_epoch_XXXX/NN_image_<image_id>.png`. Only directories matching `best_epoch_XXXX` participate in retention, and the newest 10 best-update epochs are kept across both uninterrupted and resumed training. A rendering failure occurs after `checkpoint_best.pth` is safely written, does not stop training, and is reported through the console plus `validation_render_error` in `log.txt`; successful epochs record `validation_render_dir`.
+
+The comparison canvas, line overlays, labels, and PNG encoding are produced by OpenCV; validation rendering does not introduce a second image backend.
+
+The shared defaults are `validation_render_count=10`, `validation_render_keep_best=10`, `validation_render_score_threshold=0.3`, and `validation_render_max_predictions=100`. Override them through the normal `--options` mechanism; for example, `--options validation_render_count=0` disables rendering without changing validation or checkpoint selection.
+
+Console/JSONL-only diagnostics are not silently represented in TensorBoard: epoch-averaged training meters, AMP overflow counts, KD cache hits/misses/writes, peak CUDA memory, epoch duration, parameter count, best epoch/metric, validation-render status, and detailed profiling timings remain in stdout, `log.txt`, manifests, or dedicated profiling reports.
 
 ## S one-batch probe
 
@@ -199,11 +224,11 @@ uv run --locked python main.py \
 
 Partial-epoch checkpoints (`epoch_complete=False`) are deliberately rejected, because sampler and gradient-accumulation position cannot be reconstructed by skipping unseen samples. Also, a final X-distillation checkpoint from completed epoch 29 already has `start_epoch=30`; with its unchanged 30-epoch config there is no additional work. The current exact-resume contract does not reinterpret or extend a completed LR/KD schedule—choose the intended total epoch budget before starting a matched run.
 
-Full-training configs target one 80--96 GiB GPU with batch 8, no accumulation, and LINEA-style batch multi-scale training; the S probe above remains fixed at 640 and batch 1 by design. CUDA training DataLoaders pin image/target tensors and use configurable worker prefetching for non-blocking host-to-device transfer. Worker tensor sharing defaults to PyTorch's `file_system` strategy because a large detection batch contains many variable-length target tensors and the `file_descriptor` strategy can exceed the process open-file limit; `multiprocessing_sharing_strategy` is recorded in the resolved config, run manifest, and resume contract. Multi-scale choices are filtered so P3/P4/P5 always contain at least `num_queries` encoder tokens. This removes A's invalid 224 input while retaining 256--384 training sizes and all 1100 queries; the actual weighted scale list is stored in checkpoints and run provenance. Training and KD consume every `num_queries` prediction. PyTorch validation computes official-compatible all-query sAP and deployment top-`num_select` sAP together, while postprocessing, ONNX/TensorRT output, end-to-end Torch timing, and ONNX sAP parity apply the class-0 top `num_select` contract. This keeps published-accuracy comparison separate from the configured 200--500-output deployment tuning axis. CUDA training uses fused AdamW, while CPU diagnostics automatically retain the same AdamW equations without requesting the CUDA kernel. DINO activation checkpointing skips redundant RNG snapshots because every checkpointed block is deterministic; RoPE coordinate randomness is generated outside those blocks. A successful full run additionally writes a hash-bound `run_complete.json`, allowing orchestration to distinguish a finished run from an interrupted checkpoint.
+Full-training configs target one 80--96 GiB GPU with batch 8, no accumulation, and LINEA-style batch multi-scale training; the S probe above remains fixed at 640 and batch 1 by design. CUDA training DataLoaders pin image/target tensors and use configurable worker prefetching for non-blocking host-to-device transfer. Worker tensor sharing defaults to PyTorch's `file_system` strategy because a large detection batch contains many variable-length target tensors and the `file_descriptor` strategy can exceed the process open-file limit; `multiprocessing_sharing_strategy` is recorded in the resolved config, run manifest, and resume contract. Multi-scale choices are filtered so P3/P4/P5 always contain at least the variant's configured `num_queries` encoder tokens; the actual weighted scale list is stored in checkpoints and run provenance. Training and KD consume every `num_queries` prediction. PyTorch validation computes official-compatible all-query sAP and deployment top-`num_select` sAP together, while postprocessing, ONNX/TensorRT output, end-to-end Torch timing, and ONNX sAP parity apply the class-0 top `num_select` contract. This keeps published-accuracy comparison separate from the configured 200--500-output deployment tuning axis. CUDA training uses fused AdamW, while CPU diagnostics automatically retain the same AdamW equations without requesting the CUDA kernel. DINO activation checkpointing skips redundant RNG snapshots because every checkpointed block is deterministic; RoPE coordinate randomness is generated outside those blocks. A successful full run additionally writes a hash-bound `run_complete.json`, allowing orchestration to distinguish a finished run from an interrupted checkpoint.
 
 All compact and official DINO variants cache the most recent deterministic RoPE sin/cos tensors during evaluation. The cache is keyed by resolution, device, dtype, normalization mode, and the periods-buffer version, and is bypassed for training, tracing, and ONNX export. This accelerates both fixed-shape deployment and repeated online-teacher inference without changing stochastic training or exported graphs. RoPE sin/cos remain at their natural half-head width and are applied directly to the two value halves, rather than duplicating them before every block. This halves their generated and cached tensor footprint while remaining bit-identical to the legacy full-width equation on CPU and CUDA. Full-width inputs remain supported. During Torch `no_grad` inference, compact and official DINO attention also writes those same rotated patch values back into the fresh Q/K projection storage. This removes the per-block rotated-patch and prefix-concatenation tensors; training, tracing, and ONNX export retain the ordinary functional expression.
 
-The shared LINEA decoder also caches its device-local, fixed sinusoidal frequency vector instead of rebuilding it in every decoder layer. Batch expansion for anchors, learned queries, and top-K gather indices uses zero-stride views instead of materialized `repeat` copies. These changes preserve checkpoint keys and apply to training, online KD, Torch inference, and ONNX deployment for every variant. During multi-scale training, deterministic decoder anchors are generated through the legacy CPU math once per feature shape/device and retained in a 16-entry LRU. The 640-base full recipe has 11 unique scales, so normal runs avoid repeated grid construction and host-to-device copies without unbounded cache growth. The hybrid encoder follows the same policy for its deterministic 2D sinusoidal position embeddings. Fixed eval embeddings are non-persistent buffers that move with the model once; dynamic training shapes use a 16-entry device-aware LRU. Neither path adds checkpoint keys. The hybrid encoder also requests no unused attention weights from `nn.MultiheadAttention`, enabling PyTorch's SDPA path for its P5 self-attention. This applies to every backbone family and preserves the existing parameters, masks, residuals, and normalization order. Decoder self-attention uses the same no-weights SDPA path. This is especially important for the 1100 detection queries (plus denoising queries during training) processed at every decoder layer; boolean denoising masks retain their semantics. Line deformable attention keeps its original point and reduction order. In `no_grad` forwards only, including online frozen-teacher inference and deployment, the freshly concatenated sampled-value tensor is weighted in place. Training retains the original out-of-place autograd expression, while inference avoids an equally sized temporary allocation.
+The shared LINEA decoder also caches its device-local, fixed sinusoidal frequency vector instead of rebuilding it in every decoder layer. Batch expansion for anchors, learned queries, and top-K gather indices uses zero-stride views instead of materialized `repeat` copies. These changes preserve checkpoint keys and apply to training, online KD, Torch inference, and ONNX deployment for every variant. During multi-scale training, deterministic decoder anchors are generated through the legacy CPU math once per feature shape/device and retained in a 16-entry LRU. The 640-base full recipe has 11 unique scales, so normal runs avoid repeated grid construction and host-to-device copies without unbounded cache growth. The hybrid encoder follows the same policy for its deterministic 2D sinusoidal position embeddings. Fixed eval embeddings are non-persistent buffers that move with the model once; dynamic training shapes use a 16-entry device-aware LRU. Neither path adds checkpoint keys. The hybrid encoder also requests no unused attention weights from `nn.MultiheadAttention`, enabling PyTorch's SDPA path for its P5 self-attention. This applies to every backbone family and preserves the existing parameters, masks, residuals, and normalization order. Decoder self-attention uses the same no-weights SDPA path, which matters for the variant-scaled detection queries plus denoising queries processed at each decoder layer; boolean denoising masks retain their semantics. Line deformable attention keeps its original point and reduction order. In `no_grad` forwards only, including online frozen-teacher inference and deployment, the freshly concatenated sampled-value tensor is weighted in place. Training retains the original out-of-place autograd expression, while inference avoids an equally sized temporary allocation.
 
 ## Default augmentation
 
@@ -212,14 +237,35 @@ Training applies the same geometry-aware pipeline to no-KD and KD runs, and the 
 | Stage | Default behavior |
 | --- | --- |
 | Flip | Randomly choose the horizontal or vertical flip operator; the selected operator applies with probability 0.5 (25% horizontal, 25% vertical, 50% unchanged overall). |
-| Resize/crop | With probability 0.5, resize directly to the variant input. Otherwise resize to 400, 500, or 600, take a random 384--600 crop with line clipping/filtering, then resize to the variant input. |
-| Color | LINEA `ColorJitter` always varies brightness, contrast, saturation, and hue in random order (`0.4` magnitude each). |
+| Resize/crop | With probability 0.5, resize directly to the variant input. Otherwise resize to 400, 500, or 600, take a random 384--600 crop with line clipping/filtering, then resize to the variant input. Every image resize uses standard OpenCV `INTER_LINEAR`. |
+| Color | The OpenCV implementation of LINEA `ColorJitter` always varies brightness, contrast, saturation, and hue in random order (`0.4` magnitude each). |
 | Tensor/normalize | Convert to tensor, then use LINEA mean/std for A/F/P/N and ImageNet mean/std for S/M/L/X/XL. |
 | Batch multi-scale | Full recipes resize each assembled batch to a token-safe random size around 75--125% of the base input, with the base size weighted four times. The S P0 probe alone disables this; full S no-KD/KD enables it. |
 | Denoising queries | Training adds 300 model-side denoising queries with line noise scale `1.0` and label-noise ratio `0.5`; validation/inference does not. Endpoint noise is additive around each target segment, and a zero line-noise scale is guaranteed to reproduce the same undirected target segment. |
 | Validation/test | Deterministic resize to the configured input followed by the same variant normalization; no random augmentation. |
 
-`use_photometric_distort=True` is an explicit ablation, not a default. It replaces the LINEA `ColorJitter` with the Gazelle-derived image-only photometric distortion at probability 0.5 while leaving line geometry unchanged.
+`use_photometric_distort=True` is an explicit ablation, not a default. It replaces the LINEA `ColorJitter` with an OpenCV implementation of the Gazelle-derived image-only distortion. Brightness, contrast, saturation, hue, contrast ordering, and channel permutation retain their existing probabilities while leaving line geometry unchanged.
+
+### OpenCV image preprocessing contract
+
+The fixed preprocessing schema is `opencv_rgb_inter_linear_v2`. Images are decoded by OpenCV with EXIF orientation ignored so COCO coordinates continue to address the stored pixel matrix, converted exactly once from BGR/HWC/uint8 to RGB/HWC/uint8, resized with standard `cv2.INTER_LINEAR`, converted to RGB/CHW/float32 in `[0, 1]`, and normalized with the variant's configured mean/std. `INTER_NEAREST`, `INTER_NEAREST_EXACT`, and `INTER_AREA` are not used for input images. The [UHD downsampling comparison](https://github.com/PINTO0309/UHD#the-impact-of-image-downsampling-methods) ranks LINEAR above NEAREST for accuracy while retaining substantially lower resize cost than AREA. LINEAE therefore uses LINEAR for the external image path and requires deployment preprocessing to reproduce OpenCV's rule exactly.
+
+Batch multi-scale and the online distillation teacher operate on tensors that are already normalized. They use PyTorch `mode="bilinear", align_corners=False`, which follows the same half-pixel sampling rule as OpenCV `INTER_LINEAR` and is tested against it within float32 tolerance, avoiding a GPU-to-CPU round trip. This training-only tensor interpolation is not exported. Line-map supervision and internal feature-map alignment retain their explicit PyTorch interpolation rules, while inference-time FPN feature upsampling deliberately remains nearest-neighbor for a simple quantization-friendly graph.
+
+The exported ONNX graph continues to accept normalized RGB/NCHW/float32 and does not embed decoding or resizing. Python deployment can share the exact training path as follows; other runtimes must reproduce the same ordered operations.
+
+```python
+from util.image_preprocess import preprocess_image_file
+
+images = preprocess_image_file(
+    "input.jpg",
+    size_hw=(640, 640),
+    mean=[0.485, 0.456, 0.406],
+    std=[0.229, 0.224, 0.225],
+).unsqueeze(0).numpy()
+```
+
+Detector checkpoints use checkpoint format 2 and record the preprocessing schema. Evaluation, export, benchmark, qualification, and resume reject artifacts that lack or disagree with the current OpenCV schema, so Pillow-trained and `opencv_rgb_inter_nearest_v1` detector checkpoints, existing qualified teachers, evaluation reports, ONNX models, and teacher caches must be regenerated. External `INTER_LINEAR` preprocessing is outside the ONNX graph and does not prevent Conv/Linear layers from being quantized. This does not affect the HGNetV2 or DINOv3 backbone initialization weights in `ckpts/`.
 
 ### Why the dataset remains files rather than one Parquet file
 

@@ -1,15 +1,15 @@
 from types import SimpleNamespace
 import random
 
+import cv2
 import numpy as np
 import pytest
 import torch
-from PIL import Image
 
 from datasets import build_dataset
 from datasets.collate import BatchImageCollateFunction, encoder_token_count
 from datasets.coco import make_coco_transforms
-from datasets.transforms import Normalize, crop
+from datasets.transforms import ColorJitter, Normalize, crop, hflip, resize, rotation
 from main import (
     configure_multiprocessing_sharing,
     create,
@@ -28,6 +28,7 @@ def _args(**overrides):
         eval_spatial_size=(64, 64),
         image_mean=[0.485, 0.456, 0.406],
         image_std=[0.229, 0.224, 0.225],
+        image_preprocess_schema="opencv_rgb_inter_linear_v2",
         coco_path="data/wireframe_processed",
         use_lmap=False,
         batch_size_train=1,
@@ -42,7 +43,7 @@ def _args(**overrides):
 def test_dino_normalization_profile_is_applied_once():
     args = _args()
     transform = make_coco_transforms("val", args)
-    image, _ = transform(Image.new("RGB", (64, 64), color=0), None)
+    image, _ = transform(np.zeros((64, 64, 3), dtype=np.uint8), None)
     expected = -torch.tensor(args.image_mean) / torch.tensor(args.image_std)
     assert torch.allclose(image[:, 0, 0], expected, atol=1e-6)
 
@@ -70,9 +71,9 @@ def test_optional_photometric_distortion_never_changes_line_targets():
     transform = make_coco_transforms("train", args)
     photometric = transform.transforms[2]
     target = {"lines": torch.tensor([[1.0, 2.0, 3.0, 4.0]])}
-    image = Image.new("RGB", (64, 64), color=(80, 120, 160))
+    image = np.full((64, 64, 3), (80, 120, 160), dtype=np.uint8)
     output, actual_target = photometric(image, target)
-    assert output.size == image.size
+    assert output.shape == image.shape
     assert actual_target is target
     assert torch.equal(actual_target["lines"], target["lines"])
 
@@ -161,7 +162,7 @@ def test_copied_wireframe_dataset_is_readable():
 
 
 def test_crop_clips_horizontal_vertical_and_rejects_outside_or_short_lines():
-    image = Image.new("RGB", (32, 32), color=0)
+    image = np.zeros((32, 32, 3), dtype=np.uint8)
     target = {
         "lines": torch.tensor([
             [-5.0, 10.0, 20.0, 10.0],
@@ -182,13 +183,51 @@ def test_crop_clips_horizontal_vertical_and_rejects_outside_or_short_lines():
     assert torch.isfinite(clipped["lines"]).all()
 
 
+def test_opencv_geometry_keeps_image_and_line_coordinates_aligned():
+    image = np.arange(4 * 6 * 3, dtype=np.uint8).reshape(4, 6, 3)
+    target = {"lines": torch.tensor([[1.0, 1.0, 4.0, 2.0]])}
+
+    flipped_image, flipped_target = hflip(image, target)
+    assert np.array_equal(flipped_image, cv2.flip(image, 1))
+    torch.testing.assert_close(
+        flipped_target["lines"], torch.tensor([[2.0, 2.0, 5.0, 1.0]])
+    )
+
+    rotated_image, rotated_target = rotation(image, target, 1)
+    assert np.array_equal(rotated_image, cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE))
+    torch.testing.assert_close(
+        rotated_target["lines"], torch.tensor([[1.0, 4.0, 2.0, 1.0]])
+    )
+    assert torch.equal(rotated_target["size"], torch.tensor([6, 4]))
+
+    resized_image, resized_target = resize(image, target, (3, 2))
+    assert np.array_equal(
+        resized_image,
+        cv2.resize(image, (3, 2), interpolation=cv2.INTER_LINEAR),
+    )
+    torch.testing.assert_close(
+        resized_target["lines"], torch.tensor([[0.5, 0.5, 2.0, 1.0]])
+    )
+
+
+def test_opencv_color_jitter_is_seed_reproducible():
+    image = np.arange(16 * 16 * 3, dtype=np.uint8).reshape(16, 16, 3)
+    jitter = ColorJitter()
+    torch.manual_seed(73)
+    first, _ = jitter(image, None)
+    torch.manual_seed(73)
+    second, _ = jitter(image, None)
+    assert np.array_equal(first, second)
+
+
 def test_batch_multiscale_resizes_pixels_but_preserves_normalized_lines(monkeypatch):
     collate = BatchImageCollateFunction(base_size=64, base_size_repeat=3)
     monkeypatch.setattr(random, "choice", lambda _values: 96)
     normalized_lines = torch.tensor([[0.1, 0.2, 0.8, 0.9]])
+    source = torch.arange(3 * 64 * 64, dtype=torch.float32).reshape(3, 64, 64)
     items = [
         (
-            torch.randn(3, 64, 64),
+            source.clone(),
             {"lines": normalized_lines.clone(), "labels": torch.tensor([0])},
         )
         for _ in range(2)
@@ -197,20 +236,30 @@ def test_batch_multiscale_resizes_pixels_but_preserves_normalized_lines(monkeypa
     images, targets = collate(items)
 
     assert images.shape == (2, 3, 96, 96)
+    expected = cv2.resize(
+        source.permute(1, 2, 0).numpy(),
+        (96, 96),
+        interpolation=cv2.INTER_LINEAR,
+    )
+    torch.testing.assert_close(
+        images[0],
+        torch.from_numpy(expected).permute(2, 0, 1),
+        rtol=1e-5,
+        atol=5e-6,
+    )
     assert all(torch.equal(target["lines"], normalized_lines) for target in targets)
 
 
-def test_a_multiscale_filters_resolution_with_fewer_encoder_tokens_than_queries():
+def test_a_multiscale_supports_600_queries_at_every_generated_resolution():
     collate = BatchImageCollateFunction(
         base_size=320,
         base_size_repeat=3,
-        minimum_tokens=1100,
+        minimum_tokens=600,
         feature_strides=(8, 16, 32),
     )
 
-    assert 224 not in collate.scales
-    assert set(collate.scales) == {256, 288, 320, 352, 384}
-    assert all(encoder_token_count(scale) >= 1100 for scale in collate.scales)
+    assert set(collate.scales) == {224, 256, 288, 320, 352, 384}
+    assert all(encoder_token_count(scale) >= 600 for scale in collate.scales)
 
 
 def test_data_loader_options_enable_pinned_prefetch_only_when_applicable():

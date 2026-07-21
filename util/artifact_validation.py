@@ -5,6 +5,8 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable, Mapping
 
+from .image_preprocess import validate_image_preprocess_schema
+
 
 def _mapping(value, label: str) -> Mapping:
     if not isinstance(value, Mapping):
@@ -102,6 +104,13 @@ def _config(report: Mapping, expected: str | None = None) -> str:
     return config
 
 
+def _preprocessing(report: Mapping) -> None:
+    validate_image_preprocess_schema(report.get("image_preprocess_schema"))
+    opencv_version = report.get("opencv_version")
+    if not isinstance(opencv_version, str) or not opencv_version:
+        raise ValueError("artifact lacks an OpenCV version")
+
+
 def _datasets(
     report: Mapping,
     required: Iterable[str],
@@ -126,8 +135,9 @@ def validate_evaluation_report(
     required_datasets: Iterable[str] = ("wireframe", "york"),
 ) -> None:
     report = _mapping(report, "evaluation report")
-    if report.get("format") != "lineae_evaluation_v2":
+    if report.get("format") != "lineae_evaluation_v3":
         raise ValueError("unsupported evaluation report format")
+    _preprocessing(report)
     _checkpoint(report, expected_checkpoint)
     _config(report, expected_config)
     num_queries = _positive_integer(report.get("num_queries"), "num_queries")
@@ -161,6 +171,7 @@ def validate_torch_benchmark_report(
     report = _mapping(report, "PyTorch benchmark report")
     if report.get("format") != "lineae_torch_benchmark_v1":
         raise ValueError("unsupported PyTorch benchmark report format")
+    _preprocessing(report)
     _checkpoint(report, expected_checkpoint)
     _config(report, expected_config)
     if report.get("batch_size") != 1:
@@ -213,8 +224,9 @@ def validate_onnx_export_report(
     require_simplified: bool = True,
 ) -> None:
     report = _mapping(report, "ONNX export report")
-    if report.get("format") != "lineae_onnx_export_v1":
+    if report.get("format") != "lineae_onnx_export_v2":
         raise ValueError("unsupported ONNX export report format")
+    _preprocessing(report)
     _checkpoint(report, expected_checkpoint)
     _config(report, expected_config)
     onnx_hash = _sha256(report.get("onnx_sha256"), "onnx_sha256")
@@ -271,8 +283,9 @@ def validate_onnx_evaluation_report(
     require_cuda: bool = False,
 ) -> None:
     report = _mapping(report, "ONNX evaluation report")
-    if report.get("format") != "lineae_onnx_evaluation_v2":
+    if report.get("format") != "lineae_onnx_evaluation_v3":
         raise ValueError("unsupported ONNX evaluation report format")
+    _preprocessing(report)
     _checkpoint(report, expected_checkpoint)
     _config(report, expected_config)
     onnx_hash = _sha256(report.get("onnx_sha256"), "onnx_sha256")

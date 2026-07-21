@@ -11,6 +11,11 @@ from util.artifact_validation import (
 )
 from util.onnx_runtime import create_ort_session
 
+_PREPROCESSING = {
+    "image_preprocess_schema": "opencv_rgb_inter_linear_v2",
+    "opencv_version": "4.13.0",
+}
+
 
 def _datasets():
     return {
@@ -30,7 +35,8 @@ def _datasets():
 
 def test_evaluation_schema_rejects_nonfinite_decision_metric():
     report = {
-        "format": "lineae_evaluation_v2",
+        **_PREPROCESSING,
+        "format": "lineae_evaluation_v3",
         "config": "/test/config.py",
         "checkpoint_sha256": "b" * 64,
         "num_queries": 1100,
@@ -39,6 +45,10 @@ def test_evaluation_schema_rejects_nonfinite_decision_metric():
         "datasets": _datasets(),
     }
     validate_evaluation_report(report)
+    report["format"] = "lineae_evaluation_v2"
+    with pytest.raises(ValueError, match="unsupported evaluation report format"):
+        validate_evaluation_report(report)
+    report["format"] = "lineae_evaluation_v3"
     report["datasets"]["wireframe"]["sap10"] = float("nan")
     with pytest.raises(ValueError, match="must be finite"):
         validate_evaluation_report(report)
@@ -84,6 +94,7 @@ def test_deployment_parity_uses_logits_to_disambiguate_duplicate_lines():
 
 def test_torch_benchmark_schema_requires_complete_raw_cuda_samples():
     report = {
+        **_PREPROCESSING,
         "format": "lineae_torch_benchmark_v1",
         "config": "/test/config.py",
         "checkpoint_sha256": "b" * 64,
@@ -110,7 +121,8 @@ def test_torch_benchmark_schema_requires_complete_raw_cuda_samples():
 
 def test_onnx_and_tensorrt_schemas_bind_runtime_versions_and_latency():
     onnx_report = {
-        "format": "lineae_onnx_export_v1",
+        **_PREPROCESSING,
+        "format": "lineae_onnx_export_v2",
         "config": "/test/config.py",
         "checkpoint_sha256": "b" * 64,
         "onnx_sha256": "c" * 64,
@@ -128,6 +140,10 @@ def test_onnx_and_tensorrt_schemas_bind_runtime_versions_and_latency():
         "parity": {"pred_logits": True, "pred_lines": True},
     }
     validate_onnx_export_report(onnx_report)
+    onnx_report["format"] = "lineae_onnx_export_v1"
+    with pytest.raises(ValueError, match="unsupported ONNX export report format"):
+        validate_onnx_export_report(onnx_report)
+    onnx_report["format"] = "lineae_onnx_export_v2"
     onnx_report["onnxruntime_version"] = "1.25.0"
     with pytest.raises(ValueError, match="onnxruntime 1.26.0"):
         validate_onnx_export_report(onnx_report)
@@ -156,7 +172,8 @@ def test_onnx_ap_schema_binds_torch_report_and_pure_cuda_execution():
         for dataset in ("wireframe", "york")
     }
     report = {
-        "format": "lineae_onnx_evaluation_v2",
+        **_PREPROCESSING,
+        "format": "lineae_onnx_evaluation_v3",
         "config": "/test/config.py",
         "checkpoint_sha256": "a" * 64,
         "onnx_sha256": "b" * 64,

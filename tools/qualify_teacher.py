@@ -8,6 +8,7 @@ import math
 from collections.abc import Mapping
 from pathlib import Path
 
+import cv2
 import torch
 
 from main import create
@@ -15,6 +16,11 @@ from models.lineae.backbones.base import unwrap_state_dict
 from models.lineae.variants import validate_variant_config
 from util.artifact_validation import validate_evaluation_report
 from util.experiment import config_fingerprint, sha256_file
+from util.image_preprocess import (
+    IMAGE_PREPROCESS_SCHEMA,
+    validate_checkpoint_image_preprocess,
+    validate_image_preprocess_schema,
+)
 from util.slconfig import SLConfig
 from util.training_state import atomic_torch_save
 
@@ -64,10 +70,12 @@ def _load_compatible_teacher_configs(
     inference_config_path: Path,
 ):
     source_config = SLConfig.fromfile(str(source_config_path))
+    validate_image_preprocess_schema(source_config.image_preprocess_schema)
     source_spec = validate_variant_config(source_config)
     if source_spec is None:
         raise ValueError("teacher source config must select a registered LINEAE variant")
     inference_config = SLConfig.fromfile(str(inference_config_path))
+    validate_image_preprocess_schema(inference_config.image_preprocess_schema)
     inference_spec = validate_variant_config(inference_config)
     if inference_spec is None:
         raise ValueError("teacher inference config must select a registered LINEAE variant")
@@ -138,6 +146,11 @@ def qualify(args) -> dict:
     checkpoint = torch.load(candidate_path, map_location="cpu", weights_only=False)
     if isinstance(checkpoint, Mapping) and checkpoint.get("epoch_complete", True) is not True:
         raise ValueError("a partial-epoch checkpoint cannot be promoted as a teacher")
+    validate_checkpoint_image_preprocess(checkpoint)
+    baseline_payload = torch.load(
+        baseline_checkpoint, map_location="cpu", weights_only=False
+    )
+    validate_checkpoint_image_preprocess(baseline_payload)
     config.pretrained = False
     model, _ = create(config, "modelname")
     state = unwrap_state_dict(checkpoint)
@@ -172,7 +185,9 @@ def qualify(args) -> dict:
             raise RuntimeError(f"canonical teacher inference config changed {key}")
 
     payload = {
-        "format": "lineae_teacher_v2",
+        "format": "lineae_teacher_v3",
+        "image_preprocess_schema": IMAGE_PREPROCESS_SCHEMA,
+        "opencv_version": cv2.__version__,
         "variant": spec.name,
         "model": {key: value.detach().cpu() for key, value in state.items()},
         "source_checkpoint": str(candidate_path.resolve()),
@@ -199,7 +214,9 @@ def qualify(args) -> dict:
     }
     atomic_torch_save(payload, args.output)
     result = {
-        "format": "lineae_teacher_qualification_v2",
+        "format": "lineae_teacher_qualification_v3",
+        "image_preprocess_schema": IMAGE_PREPROCESS_SCHEMA,
+        "opencv_version": cv2.__version__,
         "variant": spec.name,
         "teacher": str(args.output.resolve()),
         "sha256": sha256_file(args.output),

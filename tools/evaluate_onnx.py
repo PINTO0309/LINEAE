@@ -7,6 +7,7 @@ import json
 import math
 from pathlib import Path
 
+import cv2
 import torch
 from torch.utils.data import DataLoader, SequentialSampler
 
@@ -17,6 +18,7 @@ from util.artifact_validation import (
 )
 from util.deployment import resolve_num_select
 from util.experiment import sha256_file
+from util.image_preprocess import validate_image_preprocess_schema
 from util.onnx_runtime import create_ort_session
 from util.slconfig import SLConfig
 
@@ -40,6 +42,10 @@ def compare_ap(onnx_report: dict, torch_report: dict, tolerance: float) -> dict:
         raise ValueError("ONNX and PyTorch evaluations use different checkpoints")
     if onnx_report.get("num_select") != torch_report.get("num_select"):
         raise ValueError("ONNX and PyTorch evaluations use different num_select values")
+    if onnx_report.get("image_preprocess_schema") != torch_report.get(
+        "image_preprocess_schema"
+    ):
+        raise ValueError("ONNX and PyTorch evaluations use different preprocessing")
     deltas = {}
     for dataset in ("wireframe", "york"):
         actual = onnx_report.get("datasets", {}).get(dataset)
@@ -80,9 +86,12 @@ def evaluate(args) -> dict:
     )
 
     config = SLConfig.fromfile(args.config)
+    validate_image_preprocess_schema(config.image_preprocess_schema)
     expected_config = str(Path(args.config).resolve())
     if export_report.get("config") != expected_config:
         raise ValueError("ONNX model was exported with a different config")
+    if export_report.get("image_preprocess_schema") != config.image_preprocess_schema:
+        raise ValueError("ONNX model was exported with different image preprocessing")
     num_select = resolve_num_select(
         config.num_select,
         config.num_queries,
@@ -139,7 +148,7 @@ def evaluate(args) -> dict:
         }
 
     report = {
-        "format": "lineae_onnx_evaluation_v2",
+        "format": "lineae_onnx_evaluation_v3",
         "config": expected_config,
         "onnx": str(onnx_path.resolve()),
         "onnx_sha256": sha256_file(onnx_path),
@@ -147,6 +156,8 @@ def evaluate(args) -> dict:
         "num_select": num_select,
         "configured_num_select": int(config.num_select),
         "sap_protocol": "deployment_topk",
+        "image_preprocess_schema": config.image_preprocess_schema,
+        "opencv_version": cv2.__version__,
         "available_providers": available_providers,
         "requested_providers": requested_providers,
         "provider_options": provider_options,

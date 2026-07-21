@@ -27,7 +27,9 @@ def _report(
         "deploy_sap15": sap10 + 1,
     }
     return {
-        "format": "lineae_evaluation_v2",
+        "format": "lineae_evaluation_v3",
+        "image_preprocess_schema": "opencv_rgb_inter_linear_v2",
+        "opencv_version": "4.13.0",
         "checkpoint_sha256": checkpoint_hash,
         "config": str(Path(config).resolve()),
         "num_queries": 1100,

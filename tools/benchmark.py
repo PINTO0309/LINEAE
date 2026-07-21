@@ -9,6 +9,7 @@ import statistics
 import time
 from pathlib import Path
 
+import cv2
 import numpy as np
 import torch
 
@@ -16,6 +17,10 @@ from main import create
 from models.lineae.backbones.base import unwrap_state_dict
 from models.lineae.linea_utils import select_top_line_predictions
 from util.experiment import sha256_file
+from util.image_preprocess import (
+    validate_checkpoint_image_preprocess,
+    validate_image_preprocess_schema,
+)
 from util.profiler import stats as complexity_stats
 from util.slconfig import SLConfig
 
@@ -26,6 +31,7 @@ def percentile(values: list[float], q: float) -> float:
 
 def benchmark(args) -> dict:
     config = SLConfig.fromfile(args.config)
+    validate_image_preprocess_schema(config.image_preprocess_schema)
     spatial_size = args.spatial_size
     if spatial_size is None:
         configured = config.eval_spatial_size
@@ -40,6 +46,7 @@ def benchmark(args) -> dict:
     if args.checkpoint:
         checkpoint_path = Path(args.checkpoint)
         checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        validate_checkpoint_image_preprocess(checkpoint)
         model.load_state_dict(unwrap_state_dict(checkpoint), strict=True)
         checkpoint_hash = sha256_file(checkpoint_path)
     complexity = None if args.skip_flops else complexity_stats(model, config)
@@ -84,6 +91,8 @@ def benchmark(args) -> dict:
         "config": str(Path(args.config).resolve()),
         "checkpoint": str(Path(args.checkpoint).resolve()) if args.checkpoint else None,
         "checkpoint_sha256": checkpoint_hash,
+        "image_preprocess_schema": config.image_preprocess_schema,
+        "opencv_version": cv2.__version__,
         "device": str(device),
         "gpu": torch.cuda.get_device_name(device) if device.type == "cuda" else None,
         "gpu_total_memory_mib": (

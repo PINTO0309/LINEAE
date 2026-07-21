@@ -15,10 +15,10 @@ from util.experiment import config_fingerprint, sha256_file
 
 
 DEPLOY_PARAMETER_COUNTS = {
-    "A": (820_680, 1_919_477, 2_740_157),
-    "F": (2_750_152, 1_985_013, 4_735_165),
-    "P": (3_109_522, 1_985_013, 5_094_535),
-    "N": (1_850_396, 2_050_549, 3_900_945),
+    "A": (296_392, 1_601_102, 1_897_494),
+    "F": (653_000, 1_946_613, 2_599_613),
+    "P": (1_012_370, 1_985_013, 2_997_383),
+    "N": (1_850_396, 2_063_349, 3_913_745),
     "S": (6_003_648, 5_924_805, 11_928_453),
     "M": (10_593_536, 6_677_228, 17_270_764),
     "L": (22_979_200, 6_677_228, 29_656_428),
@@ -106,6 +106,27 @@ def test_readme_deploy_parameter_and_lab_inventory_matches_models(variant):
         f"{total / 1_000_000:.1f}",
     )
     assert expected_row in _readme_table_rows()
+
+
+def test_afpn_deploy_parameter_counts_are_strictly_monotonic():
+    totals = [DEPLOY_PARAMETER_COUNTS[variant][2] for variant in ("A", "F", "P", "N")]
+    backbones = [
+        DEPLOY_PARAMETER_COUNTS[variant][0] for variant in ("A", "F", "P", "N")
+    ]
+    assert totals == sorted(totals)
+    assert len(set(totals)) == len(totals)
+    assert backbones == sorted(backbones)
+    assert len(set(backbones)) == len(backbones)
+
+
+def test_afpn_query_and_decoder_scale_matches_latency_contract():
+    configs = [
+        SLConfig.fromfile(f"configs/lineae/lineae_{variant.lower()}.py")
+        for variant in ("A", "F", "P", "N")
+    ]
+    assert [config.num_queries for config in configs] == [600, 800, 1100, 1200]
+    assert [config.dec_layers for config in configs] == [2, 3, 3, 3]
+    assert [config.eval_idx for config in configs] == [1, 2, 2, 2]
 
 
 @pytest.mark.parametrize("variant", list(VARIANTS))
@@ -456,7 +477,9 @@ def test_qualified_teacher_artifact_binds_canonical_resolved_config():
         "deploy_sap15": 51.0,
     }
     candidate = {
-        "format": "lineae_evaluation_v2",
+        "format": "lineae_evaluation_v3",
+        "image_preprocess_schema": "opencv_rgb_inter_linear_v2",
+        "opencv_version": "4.13.0",
         "checkpoint_sha256": source_hash,
         "config": str(config_path.resolve()),
         "num_queries": 1100,
@@ -472,7 +495,9 @@ def test_qualified_teacher_artifact_binds_canonical_resolved_config():
         },
     }
     baseline = {
-        "format": "lineae_evaluation_v2",
+        "format": "lineae_evaluation_v3",
+        "image_preprocess_schema": "opencv_rgb_inter_linear_v2",
+        "opencv_version": "4.13.0",
         "checkpoint_sha256": "b" * 64,
         "config": str(baseline_config_path.resolve()),
         "num_queries": 1100,
@@ -493,7 +518,9 @@ def test_qualified_teacher_artifact_binds_canonical_resolved_config():
         },
     }
     artifact = {
-        "format": "lineae_teacher_v2",
+        "format": "lineae_teacher_v3",
+        "image_preprocess_schema": "opencv_rgb_inter_linear_v2",
+        "opencv_version": "4.13.0",
         "variant": "XL",
         "model": {"weight": torch.zeros(1)},
         "source_checkpoint_sha256": source_hash,
@@ -521,7 +548,7 @@ def test_qualified_teacher_artifact_binds_canonical_resolved_config():
     stale = {**artifact, "inference_config_sha256": "0" * 64}
     with pytest.raises(ValueError, match="config hash mismatch"):
         validate_teacher_artifact(stale, config_path)
-    with pytest.raises(ValueError, match="qualified lineae_teacher_v2"):
+    with pytest.raises(ValueError, match="qualified lineae_teacher_v3"):
         validate_teacher_artifact({"model": {}}, config_path)
     forged = {
         **artifact,

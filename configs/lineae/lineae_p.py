@@ -9,4 +9,5 @@ backbone = _spec.backbone
 backbone_weights = _spec.checkpoint
 eval_spatial_size = (_spec.input_size, _spec.input_size)
 data_aug_scales = [(_spec.input_size, _spec.input_size)]
+num_queries = 1100
 epochs = 60

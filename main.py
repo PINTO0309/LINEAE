@@ -18,6 +18,11 @@ from torch.utils.data import DataLoader, DistributedSampler
 from util.get_param_dicts import build_adamw_optimizer
 from util.artifact_validation import validate_evaluation_report
 from util.experiment import config_fingerprint, sha256_file, write_experiment_records
+from util.image_preprocess import (
+    IMAGE_PREPROCESS_SCHEMA,
+    validate_checkpoint_image_preprocess,
+    validate_image_preprocess_schema,
+)
 from util.slconfig import DictAction, SLConfig
 from util.profiler import stats
 from util.model_ema import ModelEMA
@@ -28,6 +33,11 @@ from util.training_state import (
     collect_distributed_rng_states,
     restore_training_checkpoint,
     validate_resume_checkpoint,
+)
+from util.validation_render import (
+    save_best_validation_renders,
+    should_render_best_validation,
+    validate_validation_render_options,
 )
 import util.misc as utils
 
@@ -170,6 +180,16 @@ def metric_improved(value: float, best: float | None, mode: str) -> bool:
     return value > best if mode == 'max' else value < best
 
 
+def select_epoch_evaluation_model(model, ema_m, args, epoch: int):
+    ema_active = (
+        ema_m is not None
+        and getattr(args, 'eval_ema', True)
+        and epoch >= args.ema_epoch
+        and ema_m.num_updates > 0
+    )
+    return (ema_m.module if ema_active else model), ema_active
+
+
 def write_run_completion(
     output_dir: Path,
     *,
@@ -205,11 +225,12 @@ def write_run_completion(
 
 
 def validate_teacher_artifact(checkpoint, config_path: Path) -> None:
-    if not isinstance(checkpoint, dict) or checkpoint.get('format') != 'lineae_teacher_v2':
+    if not isinstance(checkpoint, dict) or checkpoint.get('format') != 'lineae_teacher_v3':
         raise ValueError(
-            'distillation requires a qualified lineae_teacher_v2 artifact; '
+            'distillation requires a qualified lineae_teacher_v3 artifact; '
             'promote a teacher with tools/qualify_teacher.py first'
         )
+    validate_checkpoint_image_preprocess(checkpoint)
     expected_path = str(config_path.resolve())
     if checkpoint.get('inference_config') != expected_path:
         raise ValueError(
@@ -326,6 +347,7 @@ def build_frozen_teacher(args, device):
         )
 
     checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+    validate_checkpoint_image_preprocess(checkpoint)
     if not getattr(args, 'distill_allow_unqualified_teacher', False):
         validate_teacher_artifact(checkpoint, config_path)
     elif utils.is_main_process():
@@ -417,6 +439,10 @@ def main(args):
         else:
             raise ValueError("Key {} can used by args only".format(k))
     args.sap_evaluation_protocol = SAP_EVALUATION_PROTOCOL
+    validate_image_preprocess_schema(
+        getattr(args, 'image_preprocess_schema', IMAGE_PREPROCESS_SCHEMA)
+    )
+    validate_validation_render_options(args)
     sharing_strategy = configure_multiprocessing_sharing(args)
     if sharing_strategy is not None and utils.is_main_process():
         print(f'DataLoader multiprocessing sharing strategy: {sharing_strategy}')
@@ -441,6 +467,7 @@ def main(args):
         raise ValueError(f"selection_mode must be 'max' or 'min', got {selection_mode!r}")
     if args.resume:
         resume_checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
+        validate_checkpoint_image_preprocess(resume_checkpoint)
         if not args.eval:
             validate_resume_checkpoint(resume_checkpoint, args)
             args.start_epoch = int(resume_checkpoint['epoch']) + 1
@@ -759,15 +786,9 @@ def main(args):
         # eval
         test_stats = {}
         if not args.skip_eval:
-            evaluation_model = model
-            ema_active = (
-                ema_m is not None
-                and getattr(args, 'eval_ema', True)
-                and epoch >= args.ema_epoch
-                and ema_m.num_updates > 0
+            evaluation_model, ema_active = select_epoch_evaluation_model(
+                model, ema_m, args, epoch
             )
-            if ema_active:
-                evaluation_model = ema_m.module
             test_stats = evaluate(
                 evaluation_model, criterion, postprocessors, data_loader_val, device,
                 args.output_dir, args=args
@@ -787,6 +808,8 @@ def main(args):
         checkpoint_rng_states = (
             collect_distributed_rng_states() if args.output_dir else None
         )
+        validation_render_dir = None
+        validation_render_error = None
         if args.output_dir and utils.is_main_process():
             checkpoint_paths = [output_dir / 'checkpoint.pth']
             interval = int(args.save_checkpoint_interval)
@@ -820,6 +843,45 @@ def main(args):
             for checkpoint_path in checkpoint_paths:
                 atomic_torch_save(weights, checkpoint_path)
 
+            if should_render_best_validation(
+                is_best=is_best,
+                epoch_complete=epoch_complete,
+                count=getattr(args, 'validation_render_count', 0),
+            ):
+                try:
+                    render_model = getattr(evaluation_model, 'module', evaluation_model)
+                    rendered_path = save_best_validation_renders(
+                        model=render_model,
+                        postprocessor=postprocessors,
+                        dataset=dataset_val,
+                        device=device,
+                        output_dir=output_dir,
+                        epoch=epoch,
+                        image_mean=args.image_mean,
+                        image_std=args.image_std,
+                        count=args.validation_render_count,
+                        keep_best=args.validation_render_keep_best,
+                        score_threshold=args.validation_render_score_threshold,
+                        max_predictions=args.validation_render_max_predictions,
+                        batch_size=min(
+                            int(args.batch_size_val),
+                            int(args.validation_render_count),
+                        ),
+                        amp=args.amp,
+                    )
+                    validation_render_dir = str(rendered_path)
+                    print(f'Best validation renders: {rendered_path}')
+                except Exception as error:
+                    validation_render_error = (
+                        f'{type(error).__name__}: {error}'
+                    )
+                    print(
+                        'WARNING: best validation rendering failed after the '
+                        f'checkpoint was saved: {validation_render_error}'
+                    )
+                    if device.type == 'cuda':
+                        torch.cuda.empty_cache()
+
         if utils.is_main_process() and writer is not None:
             for k in test_stats:
                 writer.add_scalar(f'Test/{k}'.format(k), test_stats[k], epoch)
@@ -833,6 +895,8 @@ def main(args):
                 'best_metric': best_metric,
                 'best_epoch': best_epoch,
                 'sap_evaluation_protocol': args.sap_evaluation_protocol,
+                'validation_render_dir': validation_render_dir,
+                'validation_render_error': validation_render_error,
             }
 
         log_stats.update({'now_time': str(datetime.datetime.now())})

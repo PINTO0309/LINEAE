@@ -9,6 +9,8 @@ training_profile = 'single_gpu_96gb'
 multi_scale_train = True
 backbone = _spec.backbone
 backbone_weights = _spec.checkpoint
+# Resume-compatibility marker for the efficient synthetic P5 used by A/F/P.
+synthetic_p5_schema = 'avgpool_pointwise_v2'
 backbone_trainable_layers = 0
 backbone_pyramid_channels = _spec.pyramid_channels
 eval_spatial_size = (_spec.input_size, _spec.input_size)
@@ -23,8 +25,11 @@ unfreeze_interval = 0
 in_channels_encoder = [256, 256, 256]
 hidden_dim = 128
 feat_channels_decoder = [128, 128, 128]
-dec_layers = 3
-eval_idx = 2
+dec_layers = 2
+eval_idx = 1
+# Query count is part of the A/F/P/N latency-capacity scale; deploy still
+# returns the best 300 lines selected by the shared postprocessor.
+num_queries = 600
 batch_size_train = 8
 batch_size_val = 8
 recipe_reference_effective_batch_size = 8

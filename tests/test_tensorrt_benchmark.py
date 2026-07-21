@@ -30,7 +30,9 @@ def test_tensorrt_benchmark_binds_engine_latency_and_set_parity(tmp_path, monkey
     onnx.write_bytes(b"onnx")
     onnx_report = tmp_path / "model.parity.json"
     onnx_report.write_text(json.dumps({
-        "format": "lineae_onnx_export_v1",
+        "format": "lineae_onnx_export_v2",
+        "image_preprocess_schema": "opencv_rgb_inter_linear_v2",
+        "opencv_version": "4.13.0",
         "config": "/test/config.py",
         "checkpoint_sha256": "a" * 64,
         "onnx_sha256": sha256_file(onnx),

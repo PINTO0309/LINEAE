@@ -53,7 +53,12 @@ def test_hgnet_derivative_p5_is_learned_and_progressive_depth_freezes_earlier_st
     assert not any(parameter.requires_grad for parameter in backbone.core.stages[0].parameters())
     assert any(parameter.requires_grad for parameter in backbone.core.stages[-1].parameters())
     assert all(parameter.requires_grad for parameter in backbone.p5.parameters())
+    assert isinstance(backbone.p5[0], torch.nn.AvgPool2d)
+    assert backbone.p5[0].kernel_size == 2
+    assert backbone.p5[0].stride == 2
+    assert backbone.p5[1].kernel_size == (1, 1)
+    assert backbone.p5[1].groups == 1
 
     features = backbone(torch.randn(2, 3, 64, 64))
     sum(feature.mean() for feature in features).backward()
-    assert backbone.p5[0].weight.grad is not None
+    assert backbone.p5[1].weight.grad is not None

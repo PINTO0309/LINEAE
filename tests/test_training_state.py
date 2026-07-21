@@ -54,12 +54,16 @@ def _args():
         num_classes=2,
         hidden_dim=4,
         num_queries=2,
+        image_preprocess_schema="opencv_rgb_inter_linear_v2",
     )
 
 
 def _resume_checkpoint_stub(config=None, **updates):
+    saved_config = {"image_preprocess_schema": "opencv_rgb_inter_linear_v2"}
+    if config is not None:
+        saved_config.update(config)
     checkpoint = {
-        "format_version": 1,
+        "format_version": 2,
         "model": {},
         "optimizer": {},
         "scheduler": {},
@@ -73,7 +77,7 @@ def _resume_checkpoint_stub(config=None, **updates):
         "best_metric": None,
         "best_epoch": None,
         "inference_model": "model",
-        "config": {} if config is None else config,
+        "config": saved_config,
         "git": {"revision": "test", "dirty": False},
         "rng_state": {},
     }
@@ -623,6 +627,18 @@ def test_resume_rejects_checkpoint_before_endpoint_loss_tie_schema():
     with pytest.raises(ValueError, match="endpoint-loss tie handling"):
         validate_resume_checkpoint(checkpoint, args)
 
+
+def test_resume_rejects_derivative_checkpoint_before_synthetic_p5_schema():
+    args = SimpleNamespace(synthetic_p5_schema="avgpool_pointwise_v2")
+    checkpoint = _resume_checkpoint_stub(config={})
+
+    with pytest.raises(ValueError, match="synthetic-P5 architecture"):
+        validate_resume_checkpoint(checkpoint, args)
+
+
+def test_native_p5_variant_does_not_require_synthetic_p5_schema():
+    args = SimpleNamespace(synthetic_p5_schema=None)
+    validate_resume_checkpoint(_resume_checkpoint_stub(config={}), args)
 
 
 @pytest.mark.parametrize(

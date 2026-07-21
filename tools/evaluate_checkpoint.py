@@ -6,6 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
+import cv2
 import torch
 from torch.utils.data import DataLoader, SequentialSampler
 
@@ -20,6 +21,10 @@ from main import create
 from models.lineae.backbones.base import unwrap_state_dict
 from util.deployment import resolve_num_select
 from util.experiment import sha256_file
+from util.image_preprocess import (
+    validate_checkpoint_image_preprocess,
+    validate_image_preprocess_schema,
+)
 from util.slconfig import SLConfig
 
 
@@ -37,6 +42,7 @@ def evaluate(args) -> dict:
     if not checkpoint_path.is_file():
         raise FileNotFoundError(f"checkpoint not found: {checkpoint_path}")
     config = SLConfig.fromfile(args.config)
+    validate_image_preprocess_schema(config.image_preprocess_schema)
     num_select = resolve_num_select(
         config.num_select,
         config.num_queries,
@@ -48,6 +54,7 @@ def evaluate(args) -> dict:
     model, postprocessors = create(config, "modelname")
     criterion = create(config, "criterionname")
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    validate_checkpoint_image_preprocess(checkpoint)
     model.load_state_dict(unwrap_state_dict(checkpoint), strict=True)
     device = torch.device(args.device)
     model.to(device)
@@ -83,7 +90,7 @@ def evaluate(args) -> dict:
             **metrics,
         }
     report = {
-        "format": "lineae_evaluation_v2",
+        "format": "lineae_evaluation_v3",
         "config": str(Path(args.config).resolve()),
         "checkpoint": str(checkpoint_path.resolve()),
         "checkpoint_sha256": sha256_file(checkpoint_path),
@@ -94,6 +101,8 @@ def evaluate(args) -> dict:
         "configured_num_select": int(config.num_select),
         "num_queries": int(config.num_queries),
         "sap_protocol": SAP_EVALUATION_PROTOCOL,
+        "image_preprocess_schema": config.image_preprocess_schema,
+        "opencv_version": cv2.__version__,
         "datasets": results,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)

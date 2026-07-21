@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision.transforms.functional import resize
 
 from .matcher import build_matcher
 
@@ -104,7 +103,13 @@ class LINEACriterion(nn.Module):
             for t in targets:
                 lmaps_flatten = []
                 for lmap, downsampling in zip(t['lmap'], [1, 2, 4]):
-                    lmap_ = resize(lmap, (size//downsampling, size//downsampling))
+                    lmap_ = F.interpolate(
+                        lmap.unsqueeze(0),
+                        size=(size // downsampling, size // downsampling),
+                        mode='bilinear',
+                        align_corners=False,
+                        antialias=True,
+                    ).squeeze(0)
                     lmaps_flatten.append(lmap_.flatten(1))
                 target_lmap.append(torch.cat(lmaps_flatten, dim=1))
             target_lmap = torch.cat(target_lmap, dim=0)

@@ -129,7 +129,7 @@ class Task:
                 (self.source_checkpoint,) if self.source_checkpoint is not None else ()
             )
             return (
-                report.get("format") == "lineae_teacher_qualification_v2"
+                report.get("format") == "lineae_teacher_qualification_v3"
                 and report.get("reload_identical") is True
                 and report.get("canonical_inference_identical") is True
                 and report.get("sha256") == _sha256(self.completion_paths[0])
