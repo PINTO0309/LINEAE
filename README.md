@@ -325,13 +325,21 @@ To disable progressive unfreezing and train the entire XL DINO core from epoch 0
 ```bash
 uv run --locked python main.py \
 -c configs/lineae/lineae_xl.py \
---coco_path data/wireframe_processed --device cuda --amp \
---num_workers 8 --seed 42 \
---options output_dir=outputs/lineae_xl-full-unfreeze-v2-seed42 \
-batch_size_train=8 batch_size_val=64 epochs=36 \
+--coco_path data/wireframe_processed \
+--device cuda \
+--amp \
+--num_workers 8 \
+--seed 42 \
+--options \
+output_dir=outputs/lineae_xl-full-unfreeze-v2-seed42 \
+batch_size_train=8 \
+batch_size_val=64 \
+epochs=36 \
 gradient_accumulation_steps=1 \
-progressive_unfreeze=False backbone_trainable_layers=0 \
-initial_freeze_epochs=0 unfreeze_interval=0 \
+progressive_unfreeze=False \
+backbone_trainable_layers=0 \
+initial_freeze_epochs=0 \
+unfreeze_interval=0 \
 use_checkpoint=False
 ```
 
@@ -357,14 +365,22 @@ After teacher qualification, choose one X-and-smaller variant and run it individ
 STUDENT=x
 uv run --locked python main.py \
 -c "configs/lineae/distill/lineae_${STUDENT}.py" \
---coco_path data/wireframe_processed --device cuda --amp \
---num_workers 8 --seed 42 \
---options "output_dir=outputs/lineae_${STUDENT}_distill-seed42" \
-batch_size_train=8 batch_size_val=8 \
-gradient_accumulation_steps=1 distill_weight=1.0 \
+--coco_path data/wireframe_processed \
+--device cuda \
+--amp \
+--num_workers 8 \
+--seed 42 \
+--options \
+output_dir=outputs/lineae_${STUDENT}_distill-seed42 \
+batch_size_train=8 \
+batch_size_val=64 \
+gradient_accumulation_steps=1 \
+distill_weight=1.0 \
 distill_teacher_checkpoint=ckpts/lineae_xl_teacher.pth \
-distill_temperature_start=1.0 distill_temperature_end=4.0 \
-distill_temperature_steps=-1 distill_warmup_steps=1000
+distill_temperature_start=1.0 \
+distill_temperature_end=4.0 \
+distill_temperature_steps=-1 \
+distill_warmup_steps=1000
 ```
 
 Output KD filters and ranks teacher proposals with the same class-0 line score as LINEA evaluation, uses endpoint-swap-invariant Hungarian matching, class-0 Bernoulli logit KL, Smooth-L1 line loss, KD warm-up, and cosine temperature scheduling. Supervised and KD endpoint losses select the direct order only when directed and swapped losses tie, preventing zero-length point anchors from receiving identical endpoint gradients without changing the undirected loss value. Matching Gazelle, temperature rises from 1 to 4 and its cosine horizon is resolved from the full run's actual optimizer-step count rather than a fixed microbatch estimate. HGNet students receive the same augmented pixels with an explicit LINEA-to-ImageNet normalization conversion for the teacher. Following Gazelle's cross-variant path, the frozen teacher evaluates that augmented tensor at its own canonical 640x640 input; normalized line endpoints remain directly comparable. Optional feature KD bilinearly aligns canonical teacher feature maps to each student's current multi-scale feature sizes. For batch training, all non-empty per-image Hungarian cost matrices stay on the GPU until they are flattened and transferred to CPU together. SciPy still solves each original matrix independently, but batch 8 now incurs one synchronization instead of up to eight without changing assignments or losses. The decoder's encoder-proposal top-K uses that same class-0 logit. Wireframe and York contain only category 0; the second retained checkpoint channel is always a focal-loss negative and cannot promote proposals or influence KD matching/loss. LINEAE supervised matching and line L1 are also endpoint-swap invariant, matching the evaluator and KD definition of an undirected segment. The root-owned LINEA control explicitly keeps its original directed matcher/loss, so baseline reproduction is not silently changed. Optional exact-input teacher caching hashes the student's smaller augmented tensor together with a SHA-256 preprocessing fingerprint before normalization conversion and canonical-640 resizing. This remains transform-safe, reduces key traffic for A/F, and lets an all-hit batch skip teacher preprocessing as well as the teacher model. Cache schema 3 prevents reuse of older key semantics.
