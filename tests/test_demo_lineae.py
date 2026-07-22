@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from demo_lineae import (
+    LINEA_VARIANTS,
     PREPROCESS_PROFILES,
     annotate_image,
     build_providers,
@@ -24,6 +25,7 @@ def test_demo_does_not_depend_on_an_export_report():
 
 def test_variant_is_inferred_from_model_name_or_explicitly_selected():
     assert infer_variant_from_model(Path("lineae_n.onnx")) == "N"
+    assert infer_variant_from_model(Path("lineae_t.onnx")) == "T"
     assert infer_variant_from_model(Path("optimized_lineae_x_speed.onnx")) == "X"
     assert infer_variant_from_model(Path("lineae_xl_1x3x640x640.onnx")) == "XL"
     assert infer_variant_from_model(Path("lineae_2xl_1x3x640x640.onnx")) == "2XL"
@@ -32,6 +34,7 @@ def test_variant_is_inferred_from_model_name_or_explicitly_selected():
     assert resolve_variant(None, Path("lineae_xl.onnx")) == "XL"
     assert resolve_variant("A", Path("custom.onnx")) == "A"
     assert resolve_variant("N", Path("lineae_xl.onnx")) == "N"
+    assert "T" in LINEA_VARIANTS
     with pytest.raises(ValueError, match="specify --variant"):
         resolve_variant(None, Path("custom.onnx"))
 

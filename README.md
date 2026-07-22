@@ -9,7 +9,7 @@ https://github.com/user-attachments/assets/008f5a87-0411-4599-b699-45d163121d9c
 | Variant    | Backbone                            |   Initial input |
 | ---------- | ----------------------------------- | --------------: |
 | A / F / P  | HGNetV2 Atto / Femto / Pico         | 320 / 416 / 640 |
-| N          | HGNetV2-B0                          |             640 |
+| N / T      | HGNetV2-B0 / B1                     |             640 |
 | S / M      | DINOv3 Tiny / Tiny+                 |             640 |
 | L / X / XL | official DINOv3 S/16 / S+/16 / B/16 |             640 |
 | 2XL / 3XL  | official DINOv3 L/16 / H+/16         |             640 |
@@ -26,6 +26,7 @@ The following exact counts are produced from each committed default config with 
 | F       |          0.7 |                1.9 |       2.6 |    4.7 |
 | P       |          1.0 |                2.0 |       3.0 |   10.8 |
 | N       |          1.9 |                2.1 |       3.9 |   11.7 |
+| T       |          2.2 |                6.2 |       8.4 |   29.4 |
 | S       |          6.0 |                5.9 |      11.9 |   39.2 |
 | M       |         10.6 |                6.7 |      17.3 |   55.5 |
 | L       |         23.0 |                6.7 |      29.7 |   94.5 |
@@ -51,11 +52,13 @@ The latency snapshot uses the fused deploy graph, batch 1, `--amp`, top-300 sele
 
 The B0 bootstrap file `ckpts/PPHGNetV2_B0_stage1.pth` remains valid for all four variants because A/F/P load only shape-matched HGNet core tensors and initialize the synthetic P5 locally, while N still uses the complete B0 core. Previous A/F/P/N full-model checkpoints must not be resumed into this revised scale: A/F/P changed P5 and/or detector dimensions, and N changed query count. Exact-resume validation rejects the old P5 schema and any `num_queries`, `dec_layers`, or `eval_idx` mismatch.
 
+T uses HGNetV2-B1's native stage 4 with the original [LINEA-S detector dimensions](https://github.com/SebastianJanampa/LINEA/blob/master/configs/linea/linea_hgnetv2_s.py): 640 input, hidden width 256, FFN width 512, eight heads, three decoder layers, 1,100 queries, and top-300 output. Its exact fused deploy count is 8,433,105, preserving `N < T < S` while remaining below 8.6M. Download the immutable [B1 stage-1 bootstrap](https://github.com/Peterande/storage/releases/download/dfinev1.0/PPHGNetV2_B1_stage1.pth) explicitly as `ckpts/PPHGNetV2_B1_stage1.pth`; preflight verifies its manifest hash and never downloads it. T has not been fully trained or evaluated in this repository, so no sAP or latency result is claimed.
+
 ## Default epoch budgets
 
 The defaults are capacity-aware starting estimates, not empirically established optima. Wireframe train contains 5,000 images, so the committed single-GPU batch-8 profile performs 625 optimizer steps per epoch. Every full recipe applies cosine LR decay to `1e-7` over its complete optimizer-step horizon and selects `checkpoint_best.pth` by validation sAP10.
 
-The estimates combine three reference anchors. The original N recipe supplies N's 72 epochs. There are no A/F/P measurements, so their no-KD values conservatively multiply the reference 60/55/50 KD ladder by 1.2, producing 72/66/60. The DINO no-KD values follow the reference 45/45/40/35 trend for S/M/L/X. XL uses 36 rather than the shorter reference value of 20 because LINEAE does not fully unfreeze its 12-block backbone until epoch 23, leaving 13 fully unfrozen epochs for the accuracy-priority teacher. The accuracy-tier 2XL and 3XL budgets are determined by their deeper progressive schedules: 60 and 72 epochs leave exactly 17 fully unfrozen epochs after all 24 or 32 blocks have been exposed. Direct-XL KD uses the 60/55/50/50/40/40/30/30 A-through-X capacity ladder. Its `T=1 -> 4` schedule is resolved over each recipe's actual optimizer-step horizon.
+The estimates combine three reference anchors. The original N recipe supplies N's 72 epochs. There are no A/F/P measurements, so their no-KD values conservatively multiply the reference 60/55/50 KD ladder by 1.2, producing 72/66/60. T uses 60 no-KD epochs and 45 direct-XL KD epochs as the midpoint between the N and S recipes; these are unvalidated starting estimates. The DINO no-KD values follow the reference 45/45/40/35 trend for S/M/L/X. XL uses 36 rather than the shorter reference value of 20 because LINEAE does not fully unfreeze its 12-block backbone until epoch 23, leaving 13 fully unfrozen epochs for the accuracy-priority teacher. The accuracy-tier 2XL and 3XL budgets are determined by their deeper progressive schedules: 60 and 72 epochs leave exactly 17 fully unfrozen epochs after all 24 or 32 blocks have been exposed. Direct-XL KD uses the 60/55/50/50/45/40/40/30/30 A-through-X capacity ladder with T inserted between N and S. Its `T=1 -> 4` temperature schedule is resolved over each recipe's actual optimizer-step horizon.
 
 | Variant | No-distillation config | Epochs | Steps | Direct-XL distillation config | Epochs | Steps |
 | --- | --- | --: | --: | --- | --: | --: |
@@ -63,6 +66,7 @@ The estimates combine three reference anchors. The original N recipe supplies N'
 | F | `configs/lineae/lineae_f.py` | 66 | 41,250 | `configs/lineae/distill/lineae_f.py` | 55 | 34,375 |
 | P | `configs/lineae/lineae_p.py` | 60 | 37,500 | `configs/lineae/distill/lineae_p.py` | 50 | 31,250 |
 | N | `configs/lineae/lineae_n.py` | 72 | 45,000 | `configs/lineae/distill/lineae_n.py` | 50 | 31,250 |
+| T | `configs/lineae/lineae_t.py` | 60 | 37,500 | `configs/lineae/distill/lineae_t.py` | 45 | 28,125 |
 | S | `configs/lineae/lineae_s.py` | 45 | 28,125 | `configs/lineae/distill/lineae_s.py` | 40 | 25,000 |
 | M | `configs/lineae/lineae_m.py` | 45 | 28,125 | `configs/lineae/distill/lineae_m.py` | 40 | 25,000 |
 | L | `configs/lineae/lineae_l.py` | 40 | 25,000 | `configs/lineae/distill/lineae_l.py` | 30 | 18,750 |
@@ -83,6 +87,7 @@ LAB (`LearnableAffineBlock`) applies a learned scalar scale and bias after an ac
 | F | enabled | 20 | 40 | all HGNet stages trainable from epoch 0 |
 | P | enabled | 25 | 50 | all HGNet stages trainable from epoch 0 |
 | N | enabled | 30 | 60 | all HGNet stages trainable from epoch 0 |
+| T | enabled | 30 | 60 | all HGNet stages trainable from epoch 0 |
 | S / M / L / X / XL | not applicable | 0 | 0 | progressive 12-block DINO schedule |
 | 2XL | not applicable | 0 | 0 | progressive 24-block DINO schedule |
 | 3XL | not applicable | 0 | 0 | progressive 32-block DINO schedule |
@@ -140,7 +145,7 @@ uv run --locked pytest -q
 
 Every direct runtime, development, export, and TensorRT dependency is an exact `==` pin in `pyproject.toml`; the same direct versions are used on every supported Python minor. Image processing uses the GUI-enabled `opencv-python==4.13.0.92`, and torchvision is absent. TensorBoard logging continues to use `tensorboardX==2.6.5`, while the compatible `tensorboard==2.21.0` viewer is installed alongside it. TensorBoard requires Pillow as a private transitive UI/image dependency on supported Python versions; no LINEAE training, evaluation, augmentation, rendering, or deployment source imports PIL, so it cannot alter the OpenCV preprocessing contract. `uv.lock` fixes every transitive artifact and its hash; use `--locked` so setup fails instead of silently re-resolving it. Install the separately pinned TensorRT stack on the deployment host with `uv sync --locked --extra tensorrt`.
 
-The preflight validates all eight bootstrap files in `ckpts/` by SHA-256, tensor count, width, and depth. It uses mmap-backed FakeTensors for structural inspection, so the 1.2 GB ViT-L/16 and 3.2 GB ViT-H+/16 checkpoints are not materialized in host memory, and it never downloads missing weights.
+The preflight validates all nine bootstrap files in `ckpts/` by SHA-256, tensor count, width, and depth. It uses mmap-backed FakeTensors for structural inspection, so the 1.2 GB ViT-L/16 and 3.2 GB ViT-H+/16 checkpoints are not materialized in host memory, and it never downloads missing weights.
 
 ## TensorBoard logging
 
@@ -250,7 +255,7 @@ Training applies the same geometry-aware pipeline to no-KD and KD runs, and the 
 | Flip | Randomly choose the horizontal or vertical flip operator; the selected operator applies with probability 0.5 (25% horizontal, 25% vertical, 50% unchanged overall). |
 | Resize/crop | With probability 0.5, resize directly to the variant input. Otherwise resize to 400, 500, or 600, take a random 384--600 crop with line clipping/filtering, then resize to the variant input. Every image resize uses standard OpenCV `INTER_LINEAR`. |
 | Color | The OpenCV implementation of LINEA `ColorJitter` always varies brightness, contrast, saturation, and hue in random order (`0.4` magnitude each). |
-| Tensor/normalize | Convert to tensor, then use LINEA mean/std for A/F/P/N and ImageNet mean/std for S/M/L/X/XL/2XL/3XL. |
+| Tensor/normalize | Convert to tensor, then use LINEA mean/std for A/F/P/N/T and ImageNet mean/std for S/M/L/X/XL/2XL/3XL. |
 | Batch multi-scale | Full recipes resize each assembled batch to a token-safe random size around 75--125% of the base input, with the base size weighted four times. The S P0 probe alone disables this; full S no-KD/KD enables it. |
 | Denoising queries | Training adds 300 model-side denoising queries with line noise scale `1.0` and label-noise ratio `0.5`; validation/inference does not. Endpoint noise is additive around each target segment, and a zero line-noise scale is guaranteed to reproduce the same undirected target segment. |
 | Validation/test | Deterministic resize to the configured input followed by the same variant normalization; no random augmentation. |
@@ -286,7 +291,7 @@ Parquet can help when metadata filtering or remote columnar analytics dominates,
 
 ## A–X supervised workflow without distillation
 
-A, F, P, N, S, M, L, and X can all be trained without a teacher through the same top-level `configs/lineae/lineae_<variant>.py` convention; do not use anything under `configs/lineae/distill/`. Every listed config has `distill_weight=0.0`, so neither `ckpts/lineae_xl_teacher.pth` nor any other qualified teacher artifact is required.
+A, F, P, N, T, S, M, L, and X can all be trained without a teacher through the same top-level `configs/lineae/lineae_<variant>.py` convention; do not use anything under `configs/lineae/distill/`. Every listed config has `distill_weight=0.0`, so neither `ckpts/lineae_xl_teacher.pth` nor any other qualified teacher artifact is required.
 
 | Variant | Supervised config | Default epochs |
 | --- | --- | --: |
@@ -294,12 +299,13 @@ A, F, P, N, S, M, L, and X can all be trained without a teacher through the same
 | F | `configs/lineae/lineae_f.py` | 66 |
 | P | `configs/lineae/lineae_p.py` | 60 |
 | N | `configs/lineae/lineae_n.py` | 72 |
+| T | `configs/lineae/lineae_t.py` | 60 |
 | S | `configs/lineae/lineae_s.py` | 45 |
 | M | `configs/lineae/lineae_m.py` | 45 |
 | L | `configs/lineae/lineae_l.py` | 40 |
 | X | `configs/lineae/lineae_x.py` | 35 |
 
-Set `VARIANT` to exactly one of `a`, `f`, `p`, `n`, `s`, `m`, `l`, or `x` and start that single run. The committed config supplies its capacity-aware epoch budget, batch 8, no accumulation, multi-scale training, cosine LR, backbone initialization, and progressive unfreezing where applicable:
+Set `VARIANT` to exactly one of `a`, `f`, `p`, `n`, `t`, `s`, `m`, `l`, or `x` and start that single run. The committed config supplies its capacity-aware epoch budget, batch 8, no accumulation, multi-scale training, cosine LR, backbone initialization, and progressive unfreezing where applicable:
 
 ```bash
 VARIANT=x
@@ -459,7 +465,7 @@ Peak VRAM must be checked again after full unfreezing because backbone gradients
 
 ## Distillation
 
-After teacher qualification, choose one X-and-smaller variant and run it individually. Set `STUDENT` to exactly one of `x`, `l`, `m`, `s`, `n`, `p`, `f`, or `a`; this is a one-run command template, not an experiment runner. All eight configs use batch 8, no accumulation, the capacity-aware epoch budget listed above, output-KD weight 1.0, a 1,000-step KD warm-up, and the qualified canonical-640 XL teacher:
+After teacher qualification, choose one X-and-smaller variant and run it individually. Set `STUDENT` to exactly one of `x`, `l`, `m`, `s`, `t`, `n`, `p`, `f`, or `a`; this is a one-run command template, not an experiment runner. All nine configs use batch 8, no accumulation, the capacity-aware epoch budget listed above, output-KD weight 1.0, a 1,000-step KD warm-up, and the qualified canonical-640 XL teacher:
 
 ```bash
 STUDENT=x
@@ -492,9 +498,9 @@ uv run --locked python tools/plan_experiment_matrix.py --stage distillation \
 --output-root outputs/full_matrix_seed42
 ```
 
-This command never launches training or evaluation. Execute the listed commands individually on the intended training host, following the recorded dependencies; resume a completed-epoch checkpoint explicitly with `main.py --resume` when needed. The plan compares frozen and progressively unfrozen XL recipes and places KD only after the best valid XL candidate has passed qualification. The default all-stage plan remains the 103-task core comparison. Add `--include-ablations` to opt into the 119-task plan, which also measures XL EMA and photometric recipes plus X intermediate-fusion and feature-KD recipes through the same accuracy and deployment gates.
+This command never launches training or evaluation. Execute the listed commands individually on the intended training host, following the recorded dependencies; resume a completed-epoch checkpoint explicitly with `main.py --resume` when needed. The plan compares frozen and progressively unfrozen XL recipes and places KD only after the best valid XL candidate has passed qualification. The default all-stage plan is the 115-task core comparison. Add `--include-ablations` to opt into the 131-task plan, which also measures XL EMA and photometric recipes plus X intermediate-fusion and feature-KD recipes through the same accuracy and deployment gates.
 
-Only after the direct-XL controls exist, an intermediate-teacher experiment can be planned with `--stage cascade --include-cascade`. It first requires the XL-distilled X checkpoint to beat the matched X no-KD checkpoint, promotes it as `ckpts/lineae_x_teacher.pth`, and then trains L/M/S/N/P/F/A with that qualified X teacher. The cascade-stage plan has 33 tasks; `--stage all` has 146 including all accuracy and deployment measurements. It is never enabled by default.
+Only after the direct-XL controls exist, an intermediate-teacher experiment can be planned with `--stage cascade --include-cascade`. It first requires the XL-distilled X checkpoint to beat the matched X no-KD checkpoint, promotes it as `ckpts/lineae_x_teacher.pth`, and then trains L/M/S/N/P/F/A with that qualified X teacher. T has no cascade config in this change. The cascade-stage plan has 35 tasks; `--stage all` has 158 including all accuracy and deployment measurements. It is never enabled by default.
 
 Coarse per-variant Pareto screening is also opt-in:
 
@@ -503,7 +509,7 @@ uv run --locked python tools/plan_experiment_matrix.py --stage tuning --include-
 --output-root outputs/full_matrix_seed42
 ```
 
-For each X/L/M/S/N/P/F/A model this compares the direct-XL recipe with a fixed speed bundle and accuracy bundle. The candidates vary only input size, query/top-K count, and decoder depth while retaining the same XL teacher and training semantics. The 95-task tuning-stage plan produces hash-matched Wireframe/York metrics, CUDA latency/memory reports, and one Pareto report per variant. The core plan remains unchanged and no tuning candidate is retained without measured repeated-seed evidence.
+For each X/L/M/S/N/P/F/A model this compares the direct-XL recipe with a fixed speed bundle and accuracy bundle. T has no coarse tuning candidates in this change. The candidates vary only input size, query/top-K count, and decoder depth while retaining the same XL teacher and training semantics. The 97-task tuning-stage plan produces hash-matched Wireframe/York metrics, CUDA latency/memory reports, and one Pareto report per tuned variant. The core plan remains unchanged and no tuning candidate is retained without measured repeated-seed evidence.
 
 `tools/analyze_repeated_pareto.py` is an optional read-only post-processor for manually scheduled repeated runs. It does not launch or orchestrate training. It requires at least three matched seeds and reports 95% confidence intervals, paired deltas against the direct-XL baseline, and mean/robust Pareto sets.
 
@@ -525,7 +531,7 @@ uv run --locked python tools/export_onnx.py \
 
 ### Interactive ONNX demo
 
-`demo_lineae.py` runs a LINEAE ONNX model on one image, an image directory, a video, or a camera index. It uses the fixed input size and top-k dimensions exposed by the ONNX model itself and does not require or inspect an export report. The variant is normally inferred from a filename containing `lineae_<variant>`; specify `--variant` for a custom filename. A/F/P/N use the LINEA mean/std, while S/M/L/X/XL/2XL/3XL use ImageNet mean/std. All inputs follow the training contract: OpenCV decode with EXIF orientation ignored for still images, BGR-to-RGB conversion, `INTER_LINEAR` resize, RGB/NCHW/float32 conversion, and normalization.
+`demo_lineae.py` runs a LINEAE ONNX model on one image, an image directory, a video, or a camera index. It uses the fixed input size and top-k dimensions exposed by the ONNX model itself and does not require or inspect an export report. The variant is normally inferred from a filename containing `lineae_<variant>`; specify `--variant` for a custom filename. A/F/P/N/T use the LINEA mean/std, while S/M/L/X/XL/2XL/3XL use ImageNet mean/std. All inputs follow the training contract: OpenCV decode with EXIF orientation ignored for still images, BGR-to-RGB conversion, `INTER_LINEAR` resize, RGB/NCHW/float32 conversion, and normalization.
 
 ```bash
 uv run --locked --extra export python demo_lineae.py \

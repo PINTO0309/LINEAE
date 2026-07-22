@@ -499,12 +499,12 @@ def test_readme_documents_a_through_x_supervised_commands():
         "## A–X supervised workflow without distillation", 1
     )[1].split("## XL teacher workflow", 1)[0]
 
-    for variant in ("A", "F", "P", "N", "M", "L", "X"):
+    for variant in ("A", "F", "P", "N", "T", "M", "L", "X"):
         path = f"configs/lineae/lineae_{variant.lower()}.py"
         assert f"| {variant} | `{path}` |" in workflow
     assert "| S | `configs/lineae/lineae_s.py` |" in workflow
     assert '-c "configs/lineae/lineae_${VARIANT}.py"' in workflow
-    assert "Set `VARIANT` to exactly one of `a`, `f`, `p`, `n`, `s`, `m`, `l`, or `x`" in workflow
+    assert "Set `VARIANT` to exactly one of `a`, `f`, `p`, `n`, `t`, `s`, `m`, `l`, or `x`" in workflow
     assert "distill_weight=0.0" in workflow
     assert "ckpts/vitt_distill.pt" in workflow
 

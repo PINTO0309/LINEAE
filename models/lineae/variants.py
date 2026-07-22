@@ -20,6 +20,7 @@ VARIANTS = {
     "F": VariantSpec("F", "hgnetv2_femto", "ckpts/PPHGNetV2_B0_stage1.pth", 416, "linea", None),
     "P": VariantSpec("P", "hgnetv2_pico", "ckpts/PPHGNetV2_B0_stage1.pth", 640, "linea", None),
     "N": VariantSpec("N", "hgnetv2_n", "ckpts/PPHGNetV2_B0_stage1.pth", 640, "linea", None),
+    "T": VariantSpec("T", "hgnetv2_t", "ckpts/PPHGNetV2_B1_stage1.pth", 640, "linea", None),
     "S": VariantSpec("S", "dinov3_vitt", "ckpts/vitt_distill.pt", 640, "imagenet", 192),
     "M": VariantSpec("M", "dinov3_vittplus", "ckpts/vittplus_distill.pt", 640, "imagenet", 256),
     "L": VariantSpec("L", "dinov3_vits16", "ckpts/dinov3_vits16_pretrain_lvd1689m-08c60483.pth", 640, "imagenet", 256),

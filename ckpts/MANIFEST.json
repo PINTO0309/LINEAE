@@ -4,6 +4,11 @@
     "tensor_count": 270,
     "family": "hgnetv2_b0"
   },
+  "PPHGNetV2_B1_stage1.pth": {
+    "sha256": "3195a3fbd853af42c0c06eb121338077e96a5f7580daf503a4c05d4fc84b7fb9",
+    "tensor_count": 270,
+    "family": "hgnetv2_b1"
+  },
   "vitt_distill.pt": {
     "sha256": "2053b865f4e2673fba3f95f7e7e54ad5ee18143885e3ad27eaabb5b3b9919738",
     "tensor_count": 148,

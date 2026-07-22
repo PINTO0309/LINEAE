@@ -489,7 +489,7 @@ def untrained_x_teacher_for_integration():
     return model, config
 
 
-@pytest.mark.parametrize("variant", ["X", "L", "M", "S", "N", "P", "F", "A"])
+@pytest.mark.parametrize("variant", ["X", "L", "M", "S", "T", "N", "P", "F", "A"])
 def test_xl_output_distillation_updates_every_smaller_variant(
     variant,
     untrained_xl_teacher_for_integration,

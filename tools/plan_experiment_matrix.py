@@ -31,7 +31,12 @@ STAGE_RANK = {
     "tuning": 4,
     "deployment": 5,
 }
-STUDENT_ORDER = ("X", "L", "M", "S", "N", "P", "F", "A")
+STUDENT_ORDER = ("X", "L", "M", "S", "T", "N", "P", "F", "A")
+# T is part of the core supervised/direct-XL comparison.  Cascade and coarse
+# tuning remain limited to the previously registered experiment families until
+# T has separate, explicitly reviewed candidate configs.
+CASCADE_STUDENT_ORDER = ("X", "L", "M", "S", "N", "P", "F", "A")
+TUNING_STUDENT_ORDER = ("X", "L", "M", "S", "N", "P", "F", "A")
 
 
 def _sha256(path: Path) -> str:
@@ -791,7 +796,7 @@ def build_matrix(options: MatrixOptions) -> list[Task]:
     benchmarks_by_name = {}
     direct_kd_names = {
         f"lineae_{variant.lower()}_kd"
-        for variant in STUDENT_ORDER
+        for variant in TUNING_STUDENT_ORDER
     }
     for training_task, config in student_train_tasks:
         if (
@@ -861,7 +866,7 @@ def build_matrix(options: MatrixOptions) -> list[Task]:
         tasks.append(qualify_x)
 
         previous_cascade = qualify_x.name
-        for variant in STUDENT_ORDER[1:]:
+        for variant in CASCADE_STUDENT_ORDER[1:]:
             lower = variant.lower()
             direct_kd = training_by_name[f"lineae_{lower}_kd"]
             config = f"configs/lineae/cascade/lineae_{lower}.py"
@@ -886,7 +891,7 @@ def build_matrix(options: MatrixOptions) -> list[Task]:
 
     if options.include_tuning:
         previous_tuning = previous_cascade if options.include_cascade else qualify.name
-        for variant in STUDENT_ORDER:
+        for variant in TUNING_STUDENT_ORDER:
             lower = variant.lower()
             direct_kd = training_by_name[f"lineae_{lower}_kd"]
             records = [(

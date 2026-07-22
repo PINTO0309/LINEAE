@@ -10,7 +10,7 @@ from tools.checkpoint_preflight import DEFAULT_MANIFEST, verify_checkpoint, veri
 def test_all_bootstrap_checkpoints_match_manifest():
     assert DEFAULT_MANIFEST.is_file()
     reports = verify_manifest(DEFAULT_MANIFEST)
-    assert len(reports) == 8
+    assert len(reports) == 9
     assert all(report["status"] == "ok" for report in reports)
     assert all(Path(report["path"]).is_file() for report in reports)
 

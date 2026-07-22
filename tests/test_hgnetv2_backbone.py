@@ -13,12 +13,17 @@ from models.lineae.backbones import build_backbone
         ("hgnetv2_femto", (256, 512, 512), 165, False),
         ("hgnetv2_pico", (256, 512, 512), 215, False),
         ("hgnetv2_n", (256, 512, 1024), 270, True),
+        ("hgnetv2_t", (256, 512, 1024), 270, True),
     ],
 )
 def test_hgnet_variants_load_report_and_feature_contract(name, channels, loaded, strict):
     args = SimpleNamespace(
         backbone=name,
-        backbone_weights="ckpts/PPHGNetV2_B0_stage1.pth",
+        backbone_weights=(
+            "ckpts/PPHGNetV2_B1_stage1.pth"
+            if name == "hgnetv2_t"
+            else "ckpts/PPHGNetV2_B0_stage1.pth"
+        ),
         pretrained=True,
         use_lab=True,
         freeze_norm=False,
@@ -38,6 +43,8 @@ def test_hgnet_variants_load_report_and_feature_contract(name, channels, loaded,
     assert len(report.loaded_keys) == loaded
     assert report.strict is strict
     assert len(report.loaded_keys) + len(report.unexpected_keys) + len(report.shape_mismatches) == 270
+    if name in {"hgnetv2_n", "hgnetv2_t"}:
+        assert backbone.p5 is None
 
 
 def test_hgnet_derivative_p5_is_learned_and_progressive_depth_freezes_earlier_stages():

@@ -38,11 +38,12 @@ def _infer_depth(keys: list[str]) -> int:
 
 def _expected_shapes(family: str) -> dict[str, tuple[int, ...]] | None:
     with torch.device("meta"):
-        if family == "hgnetv2_b0":
+        if family in {"hgnetv2_b0", "hgnetv2_b1"}:
             from models.lineae.hgnetv2 import HGNetv2
 
             model = HGNetv2(
-                "B0", use_lab=True, return_idx=[1, 2, 3], freeze_at=-1,
+                "B0" if family == "hgnetv2_b0" else "B1",
+                use_lab=True, return_idx=[1, 2, 3], freeze_at=-1,
                 freeze_norm=False, pretrained=False,
             )
         elif family in {"dinov3_vitt", "dinov3_vittplus"}:

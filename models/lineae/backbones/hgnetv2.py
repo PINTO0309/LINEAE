@@ -43,6 +43,8 @@ class HGNetV2Backbone(LINEAEBackbone):
         "hgnetv2_pico": "Pico",
         "hgnetv2_n": "B0",
         "hgnetv2_b0": "B0",
+        "hgnetv2_t": "B1",
+        "hgnetv2_b1": "B1",
     }
 
     def __init__(
@@ -59,7 +61,7 @@ class HGNetV2Backbone(LINEAEBackbone):
             architecture = self._ARCHITECTURES[name.lower()]
         except KeyError as error:
             raise ValueError(f"unsupported LINEAE HGNetV2 architecture: {name}") from error
-        derivative = architecture != "B0"
+        derivative = architecture in {"Atto", "Femto", "Pico"}
         return_indices = [1, 2] if derivative else [1, 2, 3]
         self.core = HGNetv2(
             architecture,
@@ -113,7 +115,7 @@ class HGNetV2Backbone(LINEAEBackbone):
             if not key.endswith(".num_batches_tracked")
         )
         unexpected = sorted(set(source) - set(target))
-        strict = architecture == "B0"
+        strict = architecture in {"B0", "B1"}
         if strict:
             self.core.load_state_dict(source, strict=True)
             missing = []

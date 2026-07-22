@@ -20,6 +20,7 @@ DEPLOY_PARAMETER_COUNTS = {
     "F": (653_000, 1_946_613, 2_599_613),
     "P": (1_012_370, 1_985_013, 2_997_383),
     "N": (1_850_396, 2_063_349, 3_913_745),
+    "T": (2_197_004, 6_236_101, 8_433_105),
     "S": (6_003_648, 5_924_805, 11_928_453),
     "M": (10_593_536, 6_677_228, 17_270_764),
     "L": (22_979_200, 6_677_228, 29_656_428),
@@ -34,6 +35,7 @@ DEPLOY_GFLOPS = {
     "F": 4.7,
     "P": 10.8,
     "N": 11.7,
+    "T": 29.4,
     "S": 39.2,
     "M": 55.5,
     "L": 94.5,
@@ -48,13 +50,14 @@ RUNTIME_TEST_VARIANTS = tuple(
     variant for variant in VARIANTS if variant not in LARGE_VARIANTS
 )
 
-LAB_MODULE_COUNTS = {"A": 20, "F": 20, "P": 25, "N": 30}
+LAB_MODULE_COUNTS = {"A": 20, "F": 20, "P": 25, "N": 30, "T": 30}
 
 NO_KD_EPOCHS = {
     "A": 72,
     "F": 66,
     "P": 60,
     "N": 72,
+    "T": 60,
     "S": 45,
     "M": 45,
     "L": 40,
@@ -69,6 +72,7 @@ DISTILL_EPOCHS = {
     "F": 55,
     "P": 50,
     "N": 50,
+    "T": 45,
     "S": 40,
     "M": 40,
     "L": 30,
@@ -185,6 +189,33 @@ def test_afpn_query_and_decoder_scale_matches_latency_contract():
     assert [config.eval_idx for config in configs] == [1, 2, 2, 2]
 
 
+def test_t_capacity_is_between_n_and_s_and_below_linea_s_limit():
+    n_total = DEPLOY_PARAMETER_COUNTS["N"][2]
+    t_total = DEPLOY_PARAMETER_COUNTS["T"][2]
+    s_total = DEPLOY_PARAMETER_COUNTS["S"][2]
+
+    assert n_total < t_total < s_total
+    assert t_total <= 8_600_000
+
+
+def test_t_config_uses_hgnetv2_b1_and_linea_s_detector_dimensions():
+    config = SLConfig.fromfile("configs/lineae/lineae_t.py")
+
+    assert config.backbone == "hgnetv2_t"
+    assert config.backbone_weights == "ckpts/PPHGNetV2_B1_stage1.pth"
+    assert config.eval_spatial_size == (640, 640)
+    assert config.in_channels_encoder == [256, 512, 1024]
+    assert config.hidden_dim == 256
+    assert config.dim_feedforward == 512
+    assert config.nheads == 8
+    assert config.dec_layers == 3
+    assert config.eval_idx == 2
+    assert config.num_queries == 1100
+    assert config.num_select == 300
+    assert config.progressive_unfreeze is False
+    assert config.backbone_trainable_layers == 0
+
+
 @pytest.mark.parametrize("variant", RUNTIME_TEST_VARIANTS)
 def test_every_variant_runs_the_shared_detector_and_selection_contract(variant):
     config = SLConfig.fromfile(f"configs/lineae/lineae_{variant.lower()}.py")
@@ -296,7 +327,7 @@ def test_every_variant_preserves_detector_and_topk_outputs_after_fused_deploy(va
     assert torch.isfinite(deployed_scores).all()
 
 
-@pytest.mark.parametrize("variant", ["A", "F", "P", "N", "S", "M", "L", "X"])
+@pytest.mark.parametrize("variant", ["A", "F", "P", "N", "T", "S", "M", "L", "X"])
 def test_distillation_configs_are_enabled_and_require_qualified_teacher(variant, tmp_path):
     config = SLConfig.fromfile(f"configs/lineae/distill/lineae_{variant.lower()}.py")
     config.distill_teacher_checkpoint = str(tmp_path / "missing_teacher.pth")
@@ -346,7 +377,7 @@ def test_full_s_recipe_is_distillation_matched_but_probe_stays_one_batch():
     assert distillation.epochs == DISTILL_EPOCHS["S"]
 
 
-@pytest.mark.parametrize("variant", ["A", "F", "P", "N", "S", "M", "L", "X", "XL"])
+@pytest.mark.parametrize("variant", ["A", "F", "P", "N", "T", "S", "M", "L", "X", "XL"])
 def test_full_lineae_recipes_restore_linea_multiscale_training(variant):
     config = SLConfig.fromfile(f"configs/lineae/lineae_{variant.lower()}.py")
     assert config.training_profile == "single_gpu_96gb"
@@ -398,7 +429,7 @@ def test_accuracy_tier_large_recipes_keep_effective_batch_and_xl_head(
     assert config.num_select == 300
 
 
-@pytest.mark.parametrize("variant", ["A", "F", "P", "N", "S", "M", "L", "X"])
+@pytest.mark.parametrize("variant", ["A", "F", "P", "N", "T", "S", "M", "L", "X"])
 def test_no_kd_and_kd_training_step_semantics_match(variant):
     baseline = SLConfig.fromfile(f"configs/lineae/lineae_{variant.lower()}.py")
     distillation = SLConfig.fromfile(f"configs/lineae/distill/lineae_{variant.lower()}.py")

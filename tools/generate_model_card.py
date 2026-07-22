@@ -112,7 +112,7 @@ def main() -> None:
     parser.add_argument(
         "--variant",
         required=True,
-        choices=["A", "F", "P", "N", "S", "M", "L", "X", "XL", "2XL", "3XL"],
+        choices=["A", "F", "P", "N", "T", "S", "M", "L", "X", "XL", "2XL", "3XL"],
     )
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--evaluation", type=Path, required=True)

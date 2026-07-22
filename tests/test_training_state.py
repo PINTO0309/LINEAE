@@ -45,6 +45,8 @@ class TinyModel(nn.Module):
         "configs/linea/linea_hgnetv2_n.py",
         "configs/lineae/lineae_n.py",
         "configs/lineae/distill/lineae_n.py",
+        "configs/lineae/lineae_t.py",
+        "configs/lineae/distill/lineae_t.py",
         "configs/lineae/lineae_xl.py",
         "configs/lineae/lineae_2xl.py",
         "configs/lineae/lineae_3xl.py",

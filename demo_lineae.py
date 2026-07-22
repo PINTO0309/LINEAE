@@ -27,8 +27,8 @@ DEFAULT_SCORE_THRESHOLD = 0.4
 DEFAULT_MAX_LINES = 100
 DEFAULT_VIDEO_FPS = 30.0
 IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".webp"}
-VARIANTS = ("A", "F", "P", "N", "S", "M", "L", "X", "XL", "2XL", "3XL")
-LINEA_VARIANTS = frozenset(("A", "F", "P", "N"))
+VARIANTS = ("A", "F", "P", "N", "T", "S", "M", "L", "X", "XL", "2XL", "3XL")
+LINEA_VARIANTS = frozenset(("A", "F", "P", "N", "T"))
 PREPROCESS_PROFILES = {
     "linea": (
         np.asarray([0.538, 0.494, 0.453], dtype=np.float32),
@@ -220,7 +220,7 @@ class LineaeOnnxModel:
 
 def infer_variant_from_model(model_path: Path) -> str | None:
     match = re.search(
-        r"(?:^|_)lineae_(2xl|3xl|xl|[afpnsmlx])(?:_|$)", model_path.stem.lower()
+        r"(?:^|_)lineae_(2xl|3xl|xl|[afpntsmlx])(?:_|$)", model_path.stem.lower()
     )
     if match is None:
         return None

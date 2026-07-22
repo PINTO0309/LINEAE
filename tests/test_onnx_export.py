@@ -32,7 +32,7 @@ def test_deployment_num_select_accepts_cli_override_and_validates_query_count():
         resolve_num_select(300, 1100, 1101)
 
 
-@pytest.mark.parametrize("variant", ["A", "S", "X"])
+@pytest.mark.parametrize("variant", ["A", "T", "S", "X"])
 @pytest.mark.filterwarnings("ignore::torch.jit.TracerWarning")
 @pytest.mark.filterwarnings(
     "ignore:You are using the legacy TorchScript-based ONNX export:DeprecationWarning"

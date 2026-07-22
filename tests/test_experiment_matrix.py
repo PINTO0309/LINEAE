@@ -4,8 +4,10 @@ from pathlib import Path
 
 from main import write_run_completion
 from tools.plan_experiment_matrix import (
+    CASCADE_STUDENT_ORDER,
     MatrixOptions,
     STUDENT_ORDER,
+    TUNING_STUDENT_ORDER,
     Task,
     build_matrix,
     selected_tasks,
@@ -66,7 +68,7 @@ def test_opt_in_ablation_matrix_adds_matched_accuracy_and_deployment_tasks(tmp_p
     tasks = build_matrix(options)
     by_name = {task.name: task for task in tasks}
 
-    assert len(tasks) == 119
+    assert len(tasks) == 131
     assert len(by_name) == len(tasks)
     assert len(selected_tasks(tasks, "teacher")) == 12
     qualify = by_name["qualify_lineae_xl"]
@@ -105,9 +107,9 @@ def test_opt_in_x_teacher_cascade_runs_only_after_direct_xl_controls(tmp_path):
     tasks = build_matrix(options)
     by_name = {task.name: task for task in tasks}
 
-    assert len(tasks) == 146
+    assert len(tasks) == 158
     assert len(by_name) == len(tasks)
-    assert len(selected_tasks(tasks, "cascade")) == 33
+    assert len(selected_tasks(tasks, "cascade")) == 35
     qualify = by_name["qualify_lineae_x_cascade_teacher"]
     assert qualify.dependencies == (
         "evaluate_lineae_x_nokd",
@@ -124,7 +126,7 @@ def test_opt_in_x_teacher_cascade_runs_only_after_direct_xl_controls(tmp_path):
     assert str(options.cascade_teacher) in qualify.command
 
     previous = qualify.name
-    for variant in STUDENT_ORDER[1:]:
+    for variant in CASCADE_STUDENT_ORDER[1:]:
         lower = variant.lower()
         name = f"lineae_{lower}_cascade_x"
         cascade = by_name[name]
@@ -136,12 +138,14 @@ def test_opt_in_x_teacher_cascade_runs_only_after_direct_xl_controls(tmp_path):
             assert f"{prefix}{name}" in by_name
         previous = name
 
+    assert "lineae_t_cascade_x" not in by_name
+
     indices = {task.name: index for index, task in enumerate(tasks)}
     for task in tasks:
         assert all(indices[dependency] < indices[task.name] for dependency in task.dependencies)
 
     options.include_ablations = True
-    assert len(build_matrix(options)) == 162
+    assert len(build_matrix(options)) == 174
 
 
 def test_opt_in_tuning_matrix_compares_two_bundles_to_each_direct_xl_model(tmp_path):
@@ -150,11 +154,11 @@ def test_opt_in_tuning_matrix_compares_two_bundles_to_each_direct_xl_model(tmp_p
     tasks = build_matrix(options)
     by_name = {task.name: task for task in tasks}
 
-    assert len(tasks) == 159
+    assert len(tasks) == 171
     assert len(by_name) == len(tasks)
-    assert len(selected_tasks(tasks, "tuning")) == 95
+    assert len(selected_tasks(tasks, "tuning")) == 97
     previous = "qualify_lineae_xl"
-    for variant in STUDENT_ORDER:
+    for variant in TUNING_STUDENT_ORDER:
         lower = variant.lower()
         direct_name = f"lineae_{lower}_kd"
         assert by_name[f"evaluate_{direct_name}"].stage == "tuning"
@@ -188,13 +192,16 @@ def test_opt_in_tuning_matrix_compares_two_bundles_to_each_direct_xl_model(tmp_p
         ]
         previous = pareto.name
 
+    assert "lineae_t_tune_speed" not in by_name
+    assert "lineae_t_tune_accuracy" not in by_name
+
     indices = {task.name: index for index, task in enumerate(tasks)}
     for task in tasks:
         assert all(indices[dependency] < indices[task.name] for dependency in task.dependencies)
 
     options.include_ablations = True
     options.include_cascade = True
-    assert len(build_matrix(options)) == 218
+    assert len(build_matrix(options)) == 230
 
 
 def test_training_completion_marker_distinguishes_bounded_full_and_stale(tmp_path):
