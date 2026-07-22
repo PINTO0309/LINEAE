@@ -17,6 +17,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 
 from util.get_param_dicts import build_adamw_optimizer
 from util.artifact_validation import validate_evaluation_report
+from util.console import bright_green
 from util.experiment import config_fingerprint, sha256_file, write_experiment_records
 from util.image_preprocess import (
     IMAGE_PREPROCESS_SCHEMA,
@@ -802,7 +803,9 @@ def main(args):
                 best_epoch = epoch
                 is_best = True
                 print(
-                    f'New best {selection_metric}={best_metric:.4f} at epoch {best_epoch}'
+                    bright_green(
+                        f'New best {selection_metric}={best_metric:.4f} at epoch {best_epoch}'
+                    )
                 )
 
         checkpoint_rng_states = (

@@ -2,8 +2,7 @@ import torch
 import torch.nn.functional as F
 import random
 
-# This only for printing
-RED, GREEN, RESET = "\033[91m", "\033[92m", "\033[0m"
+from util.console import bright_green
 
 # __all__ = [
 #     BatchImageCollateFunction,
@@ -74,7 +73,7 @@ class BatchImageCollateFunction(BaseCollateFunction):
         )
         if self.scales is not None:
             self.scales.sort()
-            print(GREEN  + "Multi-scaling uses the following size: " + RESET, self.scales)
+            print(bright_green("Multi-scaling uses the following size: "), self.scales)
         self.stop_epoch = stop_epoch if stop_epoch is not None else 100000000
         self.ema_restart_decay = ema_restart_decay
         # self.interpolation = interpolation
