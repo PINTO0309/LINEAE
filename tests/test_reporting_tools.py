@@ -493,6 +493,22 @@ def test_readme_documents_exact_xl_resume_command():
     assert "use_checkpoint=False" in xl_workflow
 
 
+def test_readme_documents_a_through_x_supervised_commands():
+    readme = Path("README.md").read_text(encoding="utf-8")
+    workflow = readme.split(
+        "## A–X supervised workflow without distillation", 1
+    )[1].split("## XL teacher workflow", 1)[0]
+
+    for variant in ("A", "F", "P", "N", "M", "L", "X"):
+        path = f"configs/lineae/lineae_{variant.lower()}.py"
+        assert f"| {variant} | `{path}` |" in workflow
+    assert "| S | `configs/lineae/baselines/lineae_s.py` |" in workflow
+    assert '-c "configs/lineae/lineae_${VARIANT}.py"' in workflow
+    assert "-c configs/lineae/baselines/lineae_s.py" in workflow
+    assert "distill_weight=0.0" in workflow
+    assert "ckpts/vitt_distill.pt" in workflow
+
+
 def test_readme_documents_xl_full_unfreeze_command():
     readme = Path("README.md").read_text(encoding="utf-8")
     xl_workflow = readme.split("## XL teacher workflow", 1)[1].split(

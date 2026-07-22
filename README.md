@@ -284,6 +284,50 @@ One monolithic Parquet file is not recommended for this dataset. The copied tree
 
 Parquet can help when metadata filtering or remote columnar analytics dominates, but that is not this training access pattern. If profiling on network/object storage later shows filesystem metadata as the bottleneck, prefer multiple deterministic shards (Parquet row groups or tar/WebDataset shards), preserve the COCO image/annotation identity in the run manifest, and benchmark throughput and shuffle quality against the current loader before changing the default.
 
+## A–X supervised workflow without distillation
+
+A, F, P, N, S, M, L, and X can all be trained without a teacher. Use the normal variant config for A/F/P/N/M/L/X and the full-training S baseline config shown below; do not use anything under `configs/lineae/distill/`. Every listed config has `distill_weight=0.0`, so neither `ckpts/lineae_xl_teacher.pth` nor any other qualified teacher artifact is required.
+
+| Variant | Supervised config | Default epochs |
+| --- | --- | --: |
+| A | `configs/lineae/lineae_a.py` | 72 |
+| F | `configs/lineae/lineae_f.py` | 66 |
+| P | `configs/lineae/lineae_p.py` | 60 |
+| N | `configs/lineae/lineae_n.py` | 72 |
+| S | `configs/lineae/baselines/lineae_s.py` | 45 |
+| M | `configs/lineae/lineae_m.py` | 45 |
+| L | `configs/lineae/lineae_l.py` | 40 |
+| X | `configs/lineae/lineae_x.py` | 35 |
+
+For A/F/P/N/M/L/X, set `VARIANT` to exactly one lowercase name and start that single run. The committed config supplies its capacity-aware epoch budget, batch 8, no accumulation, multi-scale training, cosine LR, backbone initialization, and progressive unfreezing where applicable:
+
+```bash
+VARIANT=x
+uv run --locked python main.py \
+-c "configs/lineae/lineae_${VARIANT}.py" \
+--coco_path data/wireframe_processed \
+--device cuda \
+--amp \
+--num_workers 8 \
+--seed 42 \
+--options output_dir="outputs/lineae_${VARIANT}-nokd-seed42"
+```
+
+S uses a separate full-training config because `configs/lineae/lineae_s.py` remains the batch-1 pipeline probe:
+
+```bash
+uv run --locked python main.py \
+-c configs/lineae/baselines/lineae_s.py \
+--coco_path data/wireframe_processed \
+--device cuda \
+--amp \
+--num_workers 8 \
+--seed 42 \
+--options output_dir=outputs/lineae_s-nokd-seed42
+```
+
+The S backbone initialization file is named `ckpts/vitt_distill.pt`, but it is only a pretrained backbone weight. Its filename does not enable online teacher inference or a distillation loss in this supervised run.
+
 ## XL teacher workflow
 
 Train XL supervised first. The recommended single-96-GB-GPU recipe is batch 8, no accumulation, 36 epochs, cosine LR, AMP, eight workers, seed 42, and the progressive schedule documented above. The 36-epoch LR horizon is calibrated to 625 optimizer updates per epoch and 22,500 updates in total; increasing `batch_size_train` does not automatically scale either LR, so batch 64 would provide only 78 updates per epoch and 2,808 updates in total and is not the committed teacher recipe. Increase `batch_size_val` independently when it fits. Disabling activation checkpointing trades spare VRAM for training speed without changing optimization semantics.
