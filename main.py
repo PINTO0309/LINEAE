@@ -32,7 +32,9 @@ from util.training_state import (
     atomic_torch_save,
     build_training_checkpoint,
     collect_distributed_rng_states,
+    initialize_model_from_checkpoint,
     restore_training_checkpoint,
+    validate_initialization_checkpoint,
     validate_resume_checkpoint,
 )
 from util.validation_render import (
@@ -79,6 +81,14 @@ def get_args_parser():
                         help='device to use for training / testing')
     parser.add_argument('--seed', default=42, type=int)
     parser.add_argument('--resume', default='', help='resume from checkpoint')
+    parser.add_argument(
+        '--init-checkpoint',
+        default='',
+        help=(
+            'strict-load only full-model weights from a completed LINEAE checkpoint '
+            'and start a fresh training run'
+        ),
+    )
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
     parser.add_argument('--eval', action='store_true')
@@ -103,6 +113,17 @@ def get_args_parser():
                         help='fail if a bounded smoke step updates no tracked parameter')
 
     return parser
+
+
+def validate_checkpoint_cli_args(args) -> None:
+    if args.resume and args.init_checkpoint:
+        raise ValueError('--resume and --init-checkpoint are mutually exclusive')
+    if args.eval and args.init_checkpoint:
+        raise ValueError(
+            '--init-checkpoint is for fresh training; use --resume with --eval'
+        )
+    if args.init_checkpoint and int(args.start_epoch) != 0:
+        raise ValueError('--init-checkpoint requires --start_epoch=0')
 
 
 def create(args, classname):
@@ -335,7 +356,7 @@ def validate_teacher_artifact(checkpoint, config_path: Path) -> None:
         raise ValueError('teacher candidate no longer satisfies the recorded sAP10 gate')
 
 
-def build_frozen_teacher(args, device):
+def build_frozen_teacher(args, device, *, student_matcher=None):
     if getattr(args, 'distill_weight', 0.0) <= 0:
         return None, None
     config_path = Path(args.distill_teacher_config)
@@ -414,7 +435,10 @@ def build_frozen_teacher(args, device):
         cache=teacher_cache,
     ).to(device)
     teacher_model.requires_grad_(False).eval()
-    criterion = build_distillation_criterion(args).to(device)
+    criterion = build_distillation_criterion(
+        args,
+        student_matcher=student_matcher,
+    ).to(device)
     if utils.is_main_process():
         print(
             f'Distillation teacher: config={config_path}, checkpoint={checkpoint_path}, '
@@ -444,6 +468,7 @@ def main(args):
         getattr(args, 'image_preprocess_schema', IMAGE_PREPROCESS_SCHEMA)
     )
     validate_validation_render_options(args)
+    validate_checkpoint_cli_args(args)
     sharing_strategy = configure_multiprocessing_sharing(args)
     if sharing_strategy is not None and utils.is_main_process():
         print(f'DataLoader multiprocessing sharing strategy: {sharing_strategy}')
@@ -459,6 +484,7 @@ def main(args):
         sha256_file(teacher_path) if teacher_path is not None and teacher_path.is_file() else None
     )
     resume_checkpoint = None
+    initialization_checkpoint = None
     resume_global_step = 0
     best_metric = None
     best_epoch = None
@@ -466,6 +492,22 @@ def main(args):
     selection_mode = getattr(args, 'selection_mode', 'max').lower()
     if selection_mode not in {'max', 'min'}:
         raise ValueError(f"selection_mode must be 'max' or 'min', got {selection_mode!r}")
+    args.init_checkpoint_sha256 = None
+    args.init_checkpoint_load_report = None
+    if args.init_checkpoint:
+        initialization_path = Path(args.init_checkpoint)
+        if not initialization_path.is_file():
+            raise FileNotFoundError(
+                f'initialization checkpoint does not exist: {initialization_path}'
+            )
+        args.init_checkpoint_sha256 = sha256_file(initialization_path)
+        initialization_checkpoint = torch.load(
+            initialization_path,
+            map_location='cpu',
+            weights_only=False,
+            mmap=True,
+        )
+        validate_initialization_checkpoint(initialization_checkpoint, args)
     if args.resume:
         resume_checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
         validate_checkpoint_image_preprocess(resume_checkpoint)
@@ -490,6 +532,14 @@ def main(args):
             else:
                 best_metric = resume_checkpoint.get('best_metric')
                 best_epoch = resume_checkpoint.get('best_epoch')
+            saved_config = resume_checkpoint.get('config', {})
+            args.init_checkpoint = saved_config.get('init_checkpoint', '')
+            args.init_checkpoint_sha256 = saved_config.get(
+                'init_checkpoint_sha256'
+            )
+            args.init_checkpoint_load_report = saved_config.get(
+                'init_checkpoint_load_report'
+            )
 
     # setup tensorboard writer
     writer = None
@@ -500,7 +550,7 @@ def main(args):
         os.makedirs(args.output_dir, exist_ok=True)
         writer = SummaryWriter(**writer_kwargs)
 
-    if args.eval and args.resume:
+    if initialization_checkpoint is not None or (args.eval and args.resume):
         args.pretrained = False
 
     # setup eval_spatial_size
@@ -538,7 +588,35 @@ def main(args):
         else:
             print(f'Backbone checkpoint: {checkpoint_report}')
     model.to(device)
-    teacher_model, distillation_criterion = build_frozen_teacher(args, device)
+    if initialization_checkpoint is not None:
+        initialization_report = initialize_model_from_checkpoint(
+            initialization_checkpoint,
+            model=model,
+            args=args,
+        )
+        args.init_checkpoint_load_report = initialization_report
+        print(
+            'Initialized fresh model weights: '
+            f'path={args.init_checkpoint}, sha256={args.init_checkpoint_sha256}, '
+            f'source_epoch={initialization_report["source_epoch"]}, '
+            f'inference_model={initialization_report["inference_model"]}, '
+            f'loaded={initialization_report["loaded_tensor_count"]}/'
+            f'{initialization_report["tensor_count"]}, '
+            f'new_feature_tensors={len(initialization_report["new_state_keys"])}, '
+            f'ignored_feature_tensors='
+            f'{len(initialization_report["ignored_source_keys"])}'
+        )
+        if initialization_report['new_state_keys']:
+            print(
+                'Fresh feature-KD projection initialization: '
+                f'{initialization_report["new_state_keys"]}'
+            )
+        del initialization_checkpoint
+    teacher_model, distillation_criterion = build_frozen_teacher(
+        args,
+        device,
+        student_matcher=criterion.matcher,
+    )
 
     model_without_ddp = model
     total_backbone_blocks = getattr(model_without_ddp.backbone, 'num_blocks', 0)

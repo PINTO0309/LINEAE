@@ -99,7 +99,11 @@ def profile(args) -> dict:
     criterion = create(config, "criterionname")
     model.to(device)
     criterion.to(device)
-    teacher_model, distillation_criterion = build_frozen_teacher(config, device)
+    teacher_model, distillation_criterion = build_frozen_teacher(
+        config,
+        device,
+        student_matcher=criterion.matcher,
+    )
 
     total_blocks = getattr(model.backbone, "num_blocks", 0)
     trainable_depth = trainable_depth_for_epoch(

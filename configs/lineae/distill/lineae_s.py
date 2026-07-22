@@ -9,4 +9,3 @@ batch_size_val = 8
 recipe_reference_effective_batch_size = 8
 gradient_accumulation_steps = 1
 scheduler_step_unit = 'optimizer'
-epochs = 40

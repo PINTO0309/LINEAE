@@ -165,7 +165,7 @@ def test_render_failure_preserves_existing_output_and_removes_temporary_files(
     marker = output_dir / "marker.txt"
     marker.write_text("original", encoding="utf-8")
 
-    with pytest.raises(RuntimeError, match="could not decode.*missing.png"):
+    with pytest.raises(FileNotFoundError, match="does not exist.*missing.png"):
         render_annotations(
             annotation_file=annotation_file,
             image_dir=image_dir,

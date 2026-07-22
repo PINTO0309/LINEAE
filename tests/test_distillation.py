@@ -118,6 +118,135 @@ def _criterion(**overrides):
     return LineSetDistillationCriterion(**options)
 
 
+class _FixedMatcher(nn.Module):
+    def __init__(self, assignments):
+        super().__init__()
+        self.assignments = assignments
+
+    def forward(self, outputs, targets):
+        device = outputs["pred_logits"].device
+        if len(self.assignments) != len(targets):
+            raise ValueError("fixed matcher batch mismatch")
+        return [
+            (
+                torch.tensor(queries, dtype=torch.long, device=device),
+                torch.tensor(target_indices, dtype=torch.long, device=device),
+            )
+            for queries, target_indices in self.assignments
+        ]
+
+
+def test_gt_anchored_matching_reuses_supervised_queries_and_rejects_orphans():
+    student = _outputs(
+        [[[0.0, 0.0], [0.2, 0.0], [0.0, 0.0], [-0.2, 0.0]]],
+        [[
+            [0.0, 0.0, 0.1, 0.1],
+            [0.12, 0.2, 0.78, 0.8],
+            [0.4, 0.4, 0.5, 0.5],
+            [0.25, 0.72, 0.88, 0.12],
+        ]],
+        requires_grad=True,
+    )
+    teacher = _outputs(
+        [[[2.0, 0.0], [1.5, 0.0], [4.0, 0.0], [-2.0, 0.0]]],
+        [[
+            [0.1, 0.2, 0.8, 0.8],
+            [0.2, 0.7, 0.9, 0.1],
+            [0.45, 0.45, 0.55, 0.55],
+            [0.1, 0.2, 0.8, 0.8],
+        ]],
+    )
+    targets = [{
+        "labels": torch.tensor([0, 0]),
+        "lines": torch.tensor([
+            [0.1, 0.2, 0.8, 0.8],
+            [0.2, 0.7, 0.9, 0.1],
+        ]),
+    }]
+    criterion = _criterion(
+        confidence_threshold=0.5,
+        matching_mode="gt_anchored",
+        student_matcher=_FixedMatcher([([1, 3], [0, 1])]),
+        teacher_gt_max_distance=10.0,
+        confidence_power=1.0,
+    )
+
+    matches = criterion.match(student, teacher, targets)
+    losses = criterion(student, teacher, global_step=0, targets=targets)
+    sum(losses.values()).backward()
+
+    assert matches[0][0].tolist() == [1, 3]
+    assert matches[0][1].tolist() == [0, 1]
+    assert criterion.last_match_count == 2
+    assert criterion.last_teacher_candidate_count == 3
+    assert criterion.last_teacher_rejected_count == 1
+    assert criterion.last_target_count == 2
+    assert criterion.last_target_coverage == 1.0
+    assert criterion.last_match_weight_sum == pytest.approx(
+        torch.sigmoid(torch.tensor(2.0)).item()
+        + torch.sigmoid(torch.tensor(1.5)).item()
+    )
+    assert criterion.last_mean_confidence == pytest.approx(
+        torch.sigmoid(torch.tensor([2.0, 1.5])).mean().item()
+    )
+    assert torch.count_nonzero(student["pred_logits"].grad[0, [1, 3], 0]) == 2
+    assert torch.count_nonzero(student["pred_logits"].grad[0, [0, 2], 0]) == 0
+    assert torch.count_nonzero(student["pred_lines"].grad[0, [1, 3]]) > 0
+    assert torch.count_nonzero(student["pred_lines"].grad[0, [0, 2]]) == 0
+
+
+def test_gt_anchored_quality_gate_and_gt_normalizer_reduce_bad_teacher_targets():
+    student = _outputs(
+        [[[0.0, 0.0], [0.0, 0.0]]],
+        [[[0.12, 0.2, 0.78, 0.8], [0.4, 0.4, 0.6, 0.6]]],
+        requires_grad=True,
+    )
+    teacher = _outputs(
+        [[[2.0, 0.0], [5.0, 0.0]]],
+        [[[0.1, 0.2, 0.8, 0.8], [0.4, 0.4, 0.6, 0.6]]],
+    )
+    targets = [{
+        "labels": torch.tensor([0, 0]),
+        "lines": torch.tensor([
+            [0.1, 0.2, 0.8, 0.8],
+            [0.8, 0.1, 0.9, 0.2],
+        ]),
+    }]
+    criterion = _criterion(
+        confidence_threshold=0.5,
+        matching_mode="gt_anchored",
+        student_matcher=_FixedMatcher([([0, 1], [0, 1])]),
+        teacher_gt_max_distance=10.0,
+        confidence_power=1.0,
+    )
+
+    losses = criterion(student, teacher, global_step=0, targets=targets)
+
+    assert criterion.last_match_count == 1
+    assert criterion.last_teacher_candidate_count == 2
+    assert criterion.last_teacher_rejected_count == 1
+    assert criterion.last_target_coverage == 0.5
+    matched_only = LineSetDistillationCriterion._line_loss(
+        student["pred_lines"][0, :1],
+        teacher["pred_lines"][0, :1],
+        weights=torch.sigmoid(teacher["pred_logits"][0, :1, 0]),
+        normalizer=2.0,
+    )
+    assert torch.allclose(losses["loss_kd_line"], matched_only * 5.0)
+
+
+def test_gt_anchored_mode_requires_targets_and_supervised_matcher():
+    with pytest.raises(ValueError, match="requires the supervised student matcher"):
+        _criterion(matching_mode="gt_anchored")
+
+    criterion = _criterion(
+        matching_mode="gt_anchored",
+        student_matcher=_FixedMatcher([([], [])]),
+    )
+    with pytest.raises(ValueError, match="one target dictionary per image"):
+        criterion(_example(), _example(requires_grad=False), global_step=0)
+
+
 def test_teacher_filter_uses_the_line_evaluator_class_zero_score():
     logits = torch.tensor([
         [-10.0, 20.0],
@@ -457,6 +586,10 @@ def test_training_engine_keeps_teacher_eval_and_gradient_free():
     assert not teacher.training
     assert all(parameter.grad is None for parameter in teacher.parameters())
     assert stats["kd_matches"] == 2
+    assert stats["kd_candidates"] == 2
+    assert stats["kd_rejected"] == 0
+    assert stats["kd_target_coverage"] == 0.0
+    assert stats["kd_match_weight_sum"] == 2.0
     assert stats["kd_temperature"] == 1.0
     assert stats["kd_overhead_ms"] >= 0.0
 
@@ -509,7 +642,11 @@ def test_xl_output_distillation_updates_every_smaller_variant(
     config.distill_temperature_steps = 0
     student, _ = create(config, "modelname")
     supervised_criterion = create(config, "criterionname")
-    distillation_criterion = build_distillation_criterion(config)
+    config.distill_teacher_gt_max_distance = 1e9
+    distillation_criterion = build_distillation_criterion(
+        config,
+        student_matcher=supervised_criterion.matcher,
+    )
     student.train()
     supervised_criterion.train()
     teacher = DistillationTeacher(
@@ -547,6 +684,7 @@ def test_xl_output_distillation_updates_every_smaller_variant(
         student_outputs,
         teacher_outputs,
         global_step=0,
+        targets=targets,
     )
     kd_total = sum(kd_losses.values())
     kd_gradient = torch.autograd.grad(kd_total, tracked, retain_graph=True)[0]
@@ -555,7 +693,7 @@ def test_xl_output_distillation_updates_every_smaller_variant(
     total.backward()
     optimizer.step()
 
-    assert distillation_criterion.last_match_count == 10
+    assert distillation_criterion.last_match_count == 1
     assert kd_losses["loss_kd_logits"] > 0
     assert kd_losses["loss_kd_line"] > 0
     assert torch.isfinite(kd_gradient).all()
@@ -589,7 +727,11 @@ def test_x_cascade_distillation_updates_every_lower_variant(
     assert config.distill_teacher_checkpoint == "ckpts/lineae_x_teacher.pth"
     student, _ = create(config, "modelname")
     supervised_criterion = create(config, "criterionname")
-    distillation_criterion = build_distillation_criterion(config)
+    config.distill_teacher_gt_max_distance = 1e9
+    distillation_criterion = build_distillation_criterion(
+        config,
+        student_matcher=supervised_criterion.matcher,
+    )
     student.train()
     supervised_criterion.train()
     teacher = DistillationTeacher(
@@ -627,6 +769,7 @@ def test_x_cascade_distillation_updates_every_lower_variant(
         student_outputs,
         teacher_outputs,
         global_step=0,
+        targets=targets,
     )
     kd_total = sum(kd_losses.values())
     kd_gradient = torch.autograd.grad(kd_total, tracked, retain_graph=True)[0]
@@ -635,7 +778,7 @@ def test_x_cascade_distillation_updates_every_lower_variant(
     total.backward()
     optimizer.step()
 
-    assert distillation_criterion.last_match_count == 10
+    assert distillation_criterion.last_match_count == 1
     assert kd_losses["loss_kd_logits"] > 0
     assert kd_losses["loss_kd_line"] > 0
     assert torch.isfinite(kd_gradient).all()
@@ -665,6 +808,7 @@ def test_xl_to_x_real_feature_distillation_updates_all_pyramid_projections(
     config.distill_temperature_steps = 0
     student, _ = create(config, "modelname")
     student.train()
+    supervised_criterion = create(config, "criterionname")
     teacher = DistillationTeacher(
         teacher_core,
         source_mean=config.image_mean,
@@ -673,7 +817,11 @@ def test_xl_to_x_real_feature_distillation_updates_all_pyramid_projections(
         target_std=teacher_config.image_std,
         target_spatial_size=(64, 64),
     ).eval()
-    criterion = build_distillation_criterion(config)
+    config.distill_teacher_gt_max_distance = 1e9
+    criterion = build_distillation_criterion(
+        config,
+        student_matcher=supervised_criterion.matcher,
+    )
 
     pixels = torch.rand(1, 3, 64, 64)
     source_mean = torch.tensor(config.image_mean).view(1, 3, 1, 1)
@@ -695,7 +843,12 @@ def test_xl_to_x_real_feature_distillation_updates_all_pyramid_projections(
     student_outputs = student(images, targets)
     with torch.no_grad():
         teacher_outputs = teacher(images)
-    losses = criterion(student_outputs, teacher_outputs, global_step=0)
+    losses = criterion(
+        student_outputs,
+        teacher_outputs,
+        global_step=0,
+        targets=targets,
+    )
     gradients = torch.autograd.grad(
         losses["loss_kd_feature"],
         projection_weights,
@@ -711,7 +864,7 @@ def test_xl_to_x_real_feature_distillation_updates_all_pyramid_projections(
     assert losses["loss_kd_feature"] > 0
     assert losses["loss_kd_logits"] > 0
     assert losses["loss_kd_line"] > 0
-    assert criterion.last_match_count == 10
+    assert criterion.last_match_count == 1
     assert all(torch.isfinite(gradient).all() for gradient in gradients)
     assert all(torch.count_nonzero(gradient) for gradient in gradients)
     assert all(

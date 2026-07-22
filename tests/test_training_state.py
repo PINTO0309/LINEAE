@@ -1,3 +1,4 @@
+import json
 import random
 from types import SimpleNamespace
 
@@ -9,19 +10,28 @@ import torch.multiprocessing as mp
 from torch import nn
 from torch.nn.parallel import DistributedDataParallel
 
-from main import create, metric_improved
+from main import (
+    create,
+    get_args_parser,
+    metric_improved,
+    validate_checkpoint_cli_args,
+)
 from models.lineae.backbones.base import unwrap_state_dict
+from util.experiment import sha256_file, write_experiment_records
 from util.get_param_dicts import build_adamw_optimizer, get_optim_params
 from util.model_ema import ModelEMA
 from util.slconfig import SLConfig
 from util.training_schedule import trainable_depth_for_epoch
 from util.training_state import (
+    INITIALIZATION_CRITICAL_FIELDS,
     REQUIRED_RESUME_FIELDS,
     atomic_torch_save,
     build_training_checkpoint,
     collect_distributed_rng_states,
+    initialize_model_from_checkpoint,
     restore_checkpoint_rng_state,
     restore_training_checkpoint,
+    validate_initialization_checkpoint,
     validate_resume_checkpoint,
 )
 from warmup import LinearWarmup
@@ -37,6 +47,14 @@ class TinyModel(nn.Module):
 
     def forward(self, value):
         return self.head(self.backbone.core(value))
+
+
+class FeatureTinyModel(TinyModel):
+    def __init__(self):
+        super().__init__()
+        self.distill_feature_projections = nn.ModuleList(
+            nn.Conv2d(2, 2, kernel_size=1) for _ in range(3)
+        )
 
 
 @pytest.mark.parametrize(
@@ -102,6 +120,255 @@ def _resume_checkpoint_stub(config=None, **updates):
     }
     checkpoint.update(updates)
     return checkpoint
+
+
+def test_init_checkpoint_cli_is_distinct_from_resume_and_eval():
+    parser = get_args_parser()
+    args = parser.parse_args(
+        ["-c", "config.py", "--init-checkpoint", "checkpoint_best.pth"]
+    )
+    assert args.init_checkpoint == "checkpoint_best.pth"
+    validate_checkpoint_cli_args(args)
+
+    args.resume = "checkpoint.pth"
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        validate_checkpoint_cli_args(args)
+    args.resume = ""
+    args.eval = True
+    with pytest.raises(ValueError, match="fresh training"):
+        validate_checkpoint_cli_args(args)
+    args.eval = False
+    args.start_epoch = 1
+    with pytest.raises(ValueError, match="start_epoch=0"):
+        validate_checkpoint_cli_args(args)
+
+
+def test_init_checkpoint_provenance_is_written_to_experiment_records(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(torch.backends.cudnn, "version", lambda: None)
+    initialization = tmp_path / "checkpoint_best.pth"
+    initialization.write_bytes(b"full-model initialization")
+    initialization_sha256 = sha256_file(initialization)
+    model = TinyModel()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+    args = SimpleNamespace(
+        coco_path=str(tmp_path / "dataset"),
+        config_file="configs/lineae/lineae_n.py",
+        backbone_weights=None,
+        init_checkpoint=str(initialization),
+        init_checkpoint_sha256=initialization_sha256,
+        init_checkpoint_load_report={
+            "loaded_tensor_count": 10,
+            "new_state_keys": ["distill_feature_projections.0.weight"],
+            "ignored_source_keys": [],
+            "strict_shared_state": True,
+        },
+        resume="",
+        distill_weight=0.0,
+        seed=43,
+        world_size=1,
+        batch_size_train=2,
+        gradient_accumulation_steps=4,
+        amp=False,
+        device="cpu",
+    )
+
+    output_dir = tmp_path / "output"
+    write_experiment_records(
+        args=args,
+        model=model,
+        optimizer=optimizer,
+        output_dir=output_dir,
+        repo_root=tmp_path,
+    )
+
+    manifest = json.loads((output_dir / "run_manifest.json").read_text())
+    record = manifest["checkpoints"]["model_initialization"]
+    assert record["path"] == str(initialization.resolve())
+    assert record["sha256"] == initialization_sha256
+    assert record["exists"] is True
+    assert record["load_report"] == args.init_checkpoint_load_report
+    resolved = json.loads((output_dir / "resolved_config.json").read_text())
+    assert resolved["init_checkpoint"] == str(initialization)
+    assert resolved["init_checkpoint_sha256"] == initialization_sha256
+
+
+def test_init_checkpoint_strict_loads_only_selected_model_weights():
+    torch.manual_seed(3)
+    source = TinyModel()
+    source_optimizer = torch.optim.AdamW(source.parameters(), lr=3e-4)
+    _step(
+        source,
+        source_optimizer,
+        torch.optim.lr_scheduler.LambdaLR(source_optimizer, lambda _: 1.0),
+        torch.randn(2, 4),
+    )
+    args = _args()
+    args.epochs = 9
+    args.progressive_unfreeze = True
+    checkpoint = _resume_checkpoint_stub(
+        config={**vars(args), "epochs": 72, "progressive_unfreeze": False},
+        model=source.state_dict(),
+        epoch=7,
+        global_step=123,
+    )
+
+    torch.manual_seed(17)
+    initialized = TinyModel()
+    fresh_optimizer = torch.optim.AdamW(initialized.parameters(), lr=1e-5)
+    assert not fresh_optimizer.state
+    report = initialize_model_from_checkpoint(
+        checkpoint,
+        model=initialized,
+        args=args,
+    )
+
+    torch.testing.assert_close(initialized.state_dict(), source.state_dict())
+    assert not fresh_optimizer.state
+    assert report == {
+        "source_epoch": 7,
+        "inference_model": "model",
+        "tensor_count": len(source.state_dict()),
+        "loaded_tensor_count": len(source.state_dict()),
+        "new_state_keys": [],
+        "ignored_source_keys": [],
+        "strict_shared_state": True,
+    }
+    assert checkpoint["global_step"] == 123
+
+
+def test_init_checkpoint_selects_ema_and_rejects_mismatch_before_mutation():
+    args = _args()
+    source = TinyModel()
+    ema_state = {
+        name: value.detach().clone().add_(2.0)
+        for name, value in source.state_dict().items()
+    }
+    checkpoint = _resume_checkpoint_stub(
+        config=vars(args),
+        model=source.state_dict(),
+        inference_model="ema_model",
+        ema_model={"model": ema_state},
+    )
+    initialized = TinyModel()
+    report = initialize_model_from_checkpoint(
+        checkpoint,
+        model=initialized,
+        args=args,
+    )
+    torch.testing.assert_close(initialized.state_dict(), ema_state)
+    assert report["inference_model"] == "ema_model"
+
+    before = {name: value.clone() for name, value in initialized.state_dict().items()}
+    incompatible_args = _args()
+    incompatible_args.num_queries = 3
+    with pytest.raises(ValueError, match="num_queries"):
+        initialize_model_from_checkpoint(
+            checkpoint,
+            model=initialized,
+            args=incompatible_args,
+        )
+    torch.testing.assert_close(initialized.state_dict(), before)
+
+    wrong_state = dict(ema_state)
+    wrong_state["head.weight"] = torch.zeros(2, 4)
+    checkpoint["ema_model"] = {"model": wrong_state}
+    with pytest.raises(ValueError, match="shape_or_dtype"):
+        initialize_model_from_checkpoint(
+            checkpoint,
+            model=initialized,
+            args=args,
+        )
+    torch.testing.assert_close(initialized.state_dict(), before)
+
+
+def test_init_checkpoint_only_allows_fresh_feature_kd_projection_keys():
+    source = TinyModel()
+    args = _args()
+    args.distill_feature_weight = 1.0
+    checkpoint = _resume_checkpoint_stub(
+        config={**vars(args), "distill_feature_weight": 0.0},
+        model=source.state_dict(),
+    )
+    initialized = FeatureTinyModel()
+    initial_projection_state = {
+        name: value.clone()
+        for name, value in initialized.state_dict().items()
+        if name.startswith("distill_feature_projections.")
+    }
+
+    report = initialize_model_from_checkpoint(
+        checkpoint,
+        model=initialized,
+        args=args,
+    )
+
+    initialized_state = initialized.state_dict()
+    for name, value in source.state_dict().items():
+        assert torch.equal(initialized_state[name], value)
+    for name, value in initial_projection_state.items():
+        assert torch.equal(initialized_state[name], value)
+    assert report["new_state_keys"] == sorted(initial_projection_state)
+    assert report["loaded_tensor_count"] == len(source.state_dict())
+    assert report["ignored_source_keys"] == []
+    assert report["strict_shared_state"] is True
+
+    unsafe_source = dict(source.state_dict())
+    del unsafe_source["head.bias"]
+    checkpoint["model"] = unsafe_source
+    untouched = FeatureTinyModel()
+    before = {name: value.clone() for name, value in untouched.state_dict().items()}
+    with pytest.raises(ValueError, match="head.bias"):
+        initialize_model_from_checkpoint(
+            checkpoint,
+            model=untouched,
+            args=args,
+        )
+    torch.testing.assert_close(untouched.state_dict(), before)
+
+
+def test_init_checkpoint_ignores_only_source_feature_projection_keys_when_disabled():
+    source = FeatureTinyModel()
+    args = _args()
+    args.distill_feature_weight = 0.0
+    checkpoint = _resume_checkpoint_stub(
+        config={**vars(args), "distill_feature_weight": 1.0},
+        model=source.state_dict(),
+    )
+    initialized = TinyModel()
+
+    report = initialize_model_from_checkpoint(
+        checkpoint,
+        model=initialized,
+        args=args,
+    )
+
+    for name, value in initialized.state_dict().items():
+        assert torch.equal(value, source.state_dict()[name])
+    assert report["new_state_keys"] == []
+    assert report["ignored_source_keys"] == sorted(
+        name
+        for name in source.state_dict()
+        if name.startswith("distill_feature_projections.")
+    )
+
+
+def test_init_checkpoint_requires_completed_current_format_and_model_semantics():
+    args = _args()
+    checkpoint = _resume_checkpoint_stub(config=vars(args), model=TinyModel().state_dict())
+    assert validate_initialization_checkpoint(checkpoint, args)
+    assert "epochs" not in INITIALIZATION_CRITICAL_FIELDS
+    assert "progressive_unfreeze" not in INITIALIZATION_CRITICAL_FIELDS
+    assert "distill_weight" not in INITIALIZATION_CRITICAL_FIELDS
+
+    checkpoint["epoch_complete"] = False
+    with pytest.raises(ValueError, match="completed epoch"):
+        validate_initialization_checkpoint(checkpoint, args)
+    checkpoint["epoch_complete"] = True
+    checkpoint["format_version"] = 1
+    with pytest.raises(ValueError, match="format version"):
+        validate_initialization_checkpoint(checkpoint, args)
 
 
 def test_resume_matches_uninterrupted_next_step(tmp_path):
@@ -595,6 +862,9 @@ def test_resume_validation_covers_training_semantics_and_normalizes_sequences():
         optimizer_fused=True,
         distill_allow_unqualified_teacher=False,
         distill_teacher_resize=True,
+        distill_matching_mode="gt_anchored",
+        distill_teacher_gt_max_distance=10.0,
+        distill_confidence_power=1.0,
         distill_temperature_steps=-1,
         distill_temperature_steps_resolved=99,
         distill_temperature_end=1.0,
@@ -617,6 +887,10 @@ def test_resume_validation_covers_training_semantics_and_normalizes_sequences():
     with pytest.raises(ValueError, match="distill_teacher_resize"):
         validate_resume_checkpoint(checkpoint, args)
     args.distill_teacher_resize = True
+    args.distill_matching_mode = "independent"
+    with pytest.raises(ValueError, match="distill_matching_mode"):
+        validate_resume_checkpoint(checkpoint, args)
+    args.distill_matching_mode = "gt_anchored"
     args.distill_temperature_steps_resolved = 100
     with pytest.raises(ValueError, match="distill_temperature_steps_resolved"):
         validate_resume_checkpoint(checkpoint, args)
@@ -719,17 +993,18 @@ def test_all_dino_training_recipes_reach_full_unfreeze_before_training_ends():
 
 
 @pytest.mark.parametrize(
-    "path,total_blocks,initial_depth,fully_unfrozen_epoch",
+    "path,total_blocks,initial_depth,fully_unfrozen_epoch,fully_unfrozen_epochs",
     [
-        ("configs/lineae/lineae_2xl.py", 24, 4, 43),
-        ("configs/lineae/lineae_3xl.py", 32, 6, 55),
+        ("configs/lineae/lineae_2xl.py", 24, 4, 43, 7),
+        ("configs/lineae/lineae_3xl.py", 32, 6, 30, 20),
     ],
 )
-def test_large_accuracy_variants_retain_seventeen_fully_unfrozen_epochs(
+def test_large_accuracy_variants_complete_progressive_unfreezing(
     path,
     total_blocks,
     initial_depth,
     fully_unfrozen_epoch,
+    fully_unfrozen_epochs,
 ):
     config = SLConfig.fromfile(path)
     schedule = [
@@ -746,7 +1021,8 @@ def test_large_accuracy_variants_retain_seventeen_fully_unfrozen_epochs(
 
     assert schedule[:5] == [initial_depth] * 5
     assert schedule[fully_unfrozen_epoch - 1] == total_blocks - 1
-    assert schedule[fully_unfrozen_epoch:] == [total_blocks] * 17
+    assert config.epochs - fully_unfrozen_epoch == fully_unfrozen_epochs
+    assert schedule[fully_unfrozen_epoch:] == [total_blocks] * fully_unfrozen_epochs
 
 
 def test_ema_updates_resume_and_selects_inference_weights(tmp_path):
