@@ -624,7 +624,7 @@ def build_matrix(options: MatrixOptions) -> list[Task]:
         options,
         name="lineae_s_nokd",
         stage="baseline",
-        config="configs/lineae/baselines/lineae_s.py",
+        config="configs/lineae/lineae_s.py",
     )
     xl = _train_task(
         options,
@@ -734,11 +734,7 @@ def build_matrix(options: MatrixOptions) -> list[Task]:
     student_train_tasks = []
     for variant in STUDENT_ORDER:
         lower = variant.lower()
-        baseline_config = (
-            "configs/lineae/baselines/lineae_s.py"
-            if variant == "S"
-            else f"configs/lineae/lineae_{lower}.py"
-        )
+        baseline_config = f"configs/lineae/lineae_{lower}.py"
         if variant == "S":
             no_kd = s_baseline
             kd_dependencies = (no_kd.name, qualify.name, previous_kd)

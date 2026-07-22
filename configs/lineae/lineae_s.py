@@ -9,10 +9,9 @@ _spec = _get_variant('S')
 
 output_dir = 'outputs/lineae_s'
 variant = 'S'
-training_profile = 'p0_smoke'
+training_profile = 'single_gpu_96gb'
 
-# DINOv3 ViT-Tiny backbone. This is the provisional S pipeline probe, not a
-# finalized accuracy/latency scaling decision.
+# DINOv3 ViT-Tiny backbone for the full supervised S recipe.
 backbone = _spec.backbone
 backbone_weights = _spec.checkpoint
 backbone_trainable_layers = 2
@@ -29,10 +28,10 @@ hidden_dim = 256
 dim_feedforward = 512
 nheads = 8
 use_lmap = False
-multi_scale_train = False
-batch_size_train = 1
-batch_size_val = 1
-recipe_reference_effective_batch_size = 1
+multi_scale_train = True
+batch_size_train = 8
+batch_size_val = 8
+recipe_reference_effective_batch_size = 8
 
 hybrid_encoder = 'hybrid_encoder_asymmetric_conv'
 pe_temperatureH = 20
@@ -48,7 +47,7 @@ reg_max = 16
 reg_scale = 4
 eval_idx = 2
 
-epochs = 36
+epochs = 45
 lr_drop_list = [25]
 weight_dict = {'loss_logits': 2, 'loss_line': 5}
 use_warmup = False
@@ -60,6 +59,7 @@ progressive_unfreeze = True
 initial_freeze_epochs = 5
 unfreeze_interval = 2
 gradient_accumulation_steps = 1
+scheduler_step_unit = 'optimizer'
 
 model_parameters = [
     {

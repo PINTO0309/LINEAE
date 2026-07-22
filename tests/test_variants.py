@@ -318,9 +318,9 @@ def test_no_kd_does_not_require_or_construct_teacher(tmp_path):
     assert criterion is None
 
 
-def test_full_s_baseline_is_distillation_matched_but_probe_stays_one_batch():
-    probe = SLConfig.fromfile("configs/lineae/lineae_s.py")
-    baseline = SLConfig.fromfile("configs/lineae/baselines/lineae_s.py")
+def test_full_s_recipe_is_distillation_matched_but_probe_stays_one_batch():
+    probe = SLConfig.fromfile("configs/lineae/probes/lineae_s.py")
+    baseline = SLConfig.fromfile("configs/lineae/lineae_s.py")
     distillation = SLConfig.fromfile("configs/lineae/distill/lineae_s.py")
 
     assert probe.gradient_accumulation_steps == 1
@@ -346,7 +346,7 @@ def test_full_s_baseline_is_distillation_matched_but_probe_stays_one_batch():
     assert distillation.epochs == DISTILL_EPOCHS["S"]
 
 
-@pytest.mark.parametrize("variant", ["A", "F", "P", "N", "M", "L", "X", "XL"])
+@pytest.mark.parametrize("variant", ["A", "F", "P", "N", "S", "M", "L", "X", "XL"])
 def test_full_lineae_recipes_restore_linea_multiscale_training(variant):
     config = SLConfig.fromfile(f"configs/lineae/lineae_{variant.lower()}.py")
     assert config.training_profile == "single_gpu_96gb"
@@ -398,7 +398,7 @@ def test_accuracy_tier_large_recipes_keep_effective_batch_and_xl_head(
     assert config.num_select == 300
 
 
-@pytest.mark.parametrize("variant", ["A", "F", "P", "N", "M", "L", "X"])
+@pytest.mark.parametrize("variant", ["A", "F", "P", "N", "S", "M", "L", "X"])
 def test_no_kd_and_kd_training_step_semantics_match(variant):
     baseline = SLConfig.fromfile(f"configs/lineae/lineae_{variant.lower()}.py")
     distillation = SLConfig.fromfile(f"configs/lineae/distill/lineae_{variant.lower()}.py")
@@ -418,11 +418,7 @@ def test_no_kd_and_kd_training_step_semantics_match(variant):
 @pytest.mark.parametrize("variant", list(VARIANTS))
 def test_capacity_aware_epoch_budgets_match_configs_and_readme(variant):
     lower = variant.lower()
-    no_kd_path = (
-        "configs/lineae/baselines/lineae_s.py"
-        if variant == "S"
-        else f"configs/lineae/lineae_{lower}.py"
-    )
+    no_kd_path = f"configs/lineae/lineae_{lower}.py"
     no_kd_epochs = SLConfig.fromfile(no_kd_path).epochs
     assert no_kd_epochs == NO_KD_EPOCHS[variant]
 
@@ -479,8 +475,8 @@ def test_readme_documents_complete_dino_unfreeze_schedule():
 @pytest.mark.parametrize(
     "label,path",
     [
-        ("S P0 probe", "configs/lineae/lineae_s.py"),
-        ("S no-KD", "configs/lineae/baselines/lineae_s.py"),
+        ("S P0 probe", "configs/lineae/probes/lineae_s.py"),
+        ("S no-KD", "configs/lineae/lineae_s.py"),
         ("S direct-XL KD", "configs/lineae/distill/lineae_s.py"),
         ("M no-KD", "configs/lineae/lineae_m.py"),
         ("M direct-XL KD", "configs/lineae/distill/lineae_m.py"),

@@ -63,7 +63,7 @@ The estimates combine three reference anchors. The original N recipe supplies N'
 | F | `configs/lineae/lineae_f.py` | 66 | 41,250 | `configs/lineae/distill/lineae_f.py` | 55 | 34,375 |
 | P | `configs/lineae/lineae_p.py` | 60 | 37,500 | `configs/lineae/distill/lineae_p.py` | 50 | 31,250 |
 | N | `configs/lineae/lineae_n.py` | 72 | 45,000 | `configs/lineae/distill/lineae_n.py` | 50 | 31,250 |
-| S | `configs/lineae/baselines/lineae_s.py` | 45 | 28,125 | `configs/lineae/distill/lineae_s.py` | 40 | 25,000 |
+| S | `configs/lineae/lineae_s.py` | 45 | 28,125 | `configs/lineae/distill/lineae_s.py` | 40 | 25,000 |
 | M | `configs/lineae/lineae_m.py` | 45 | 28,125 | `configs/lineae/distill/lineae_m.py` | 40 | 25,000 |
 | L | `configs/lineae/lineae_l.py` | 40 | 25,000 | `configs/lineae/distill/lineae_l.py` | 30 | 18,750 |
 | X | `configs/lineae/lineae_x.py` | 35 | 21,875 | `configs/lineae/distill/lineae_x.py` | 30 | 18,750 |
@@ -71,7 +71,7 @@ The estimates combine three reference anchors. The original N recipe supplies N'
 | 2XL | `configs/lineae/lineae_2xl.py` | 60 | 37,500 | not applicable (supervised teacher) | — | — |
 | 3XL | `configs/lineae/lineae_3xl.py` | 72 | 45,000 | not applicable (supervised teacher) | — | — |
 
-Steps assume the default one-GPU batch-8 profile; DDP changes steps per rank but not images seen per epoch. These unequal budgets target a strong result for each capacity. For a causal no-KD versus KD comparison at equal compute, override both runs to the same explicit `epochs=<N>` and treat that as a separate matched experiment. `configs/lineae/lineae_s.py` remains the 36-epoch, batch-1, fixed-640 P0 pipeline probe; use the `baselines/` config for full no-KD S training.
+Steps assume the default one-GPU batch-8 profile; DDP changes steps per rank but not images seen per epoch. These unequal budgets target a strong result for each capacity. For a causal no-KD versus KD comparison at equal compute, override both runs to the same explicit `epochs=<N>` and treat that as a separate matched experiment. S now follows the same top-level convention as every other formal variant: `configs/lineae/lineae_s.py` is its full no-KD recipe. The bounded batch-1 diagnostic remains available separately at `configs/lineae/probes/lineae_s.py`.
 
 ## LAB and backbone unfreezing
 
@@ -113,8 +113,8 @@ The final fully unfrozen span differs because each recipe has a different epoch 
 
 | Variant/recipe | Config | Total epochs | Fully unfrozen epoch range | Fully unfrozen epochs |
 | --- | --- | --: | --- | --: |
-| S P0 probe | `configs/lineae/lineae_s.py` | 36 | 23–35 | 13 |
-| S no-KD | `configs/lineae/baselines/lineae_s.py` | 45 | 23–44 | 22 |
+| S P0 probe | `configs/lineae/probes/lineae_s.py` | 36 | 23–35 | 13 |
+| S no-KD | `configs/lineae/lineae_s.py` | 45 | 23–44 | 22 |
 | S direct-XL KD | `configs/lineae/distill/lineae_s.py` | 40 | 23–39 | 17 |
 | M no-KD | `configs/lineae/lineae_m.py` | 45 | 23–44 | 22 |
 | M direct-XL KD | `configs/lineae/distill/lineae_m.py` | 40 | 23–39 | 17 |
@@ -210,7 +210,7 @@ Console/JSONL-only diagnostics are not silently represented in TensorBoard: epoc
 ## S one-batch probe
 
 ```bash
-python main.py -c configs/lineae/lineae_s.py \
+python main.py -c configs/lineae/probes/lineae_s.py \
 --coco_path data/wireframe_processed --amp --num_workers 0 \
 --max_train_steps 1 --skip_eval --skip_profile --verify_optimizer_step \
 --options output_dir=outputs/lineae_s_smoke
@@ -235,7 +235,7 @@ uv run --locked python main.py \
 
 Partial-epoch checkpoints (`epoch_complete=False`) are deliberately rejected, because sampler and gradient-accumulation position cannot be reconstructed by skipping unseen samples. Also, a final X-distillation checkpoint from completed epoch 29 already has `start_epoch=30`; with its unchanged 30-epoch config there is no additional work. The current exact-resume contract does not reinterpret or extend a completed LR/KD schedule—choose the intended total epoch budget before starting a matched run.
 
-Full-training configs target one 80--96 GiB GPU with batch 8, no accumulation, and LINEA-style batch multi-scale training; the S probe above remains fixed at 640 and batch 1 by design. CUDA training DataLoaders pin image/target tensors and use configurable worker prefetching for non-blocking host-to-device transfer. Worker tensor sharing defaults to PyTorch's `file_system` strategy because a large detection batch contains many variable-length target tensors and the `file_descriptor` strategy can exceed the process open-file limit; `multiprocessing_sharing_strategy` is recorded in the resolved config, run manifest, and resume contract. Multi-scale choices are filtered so P3/P4/P5 always contain at least the variant's configured `num_queries` encoder tokens; the actual weighted scale list is stored in checkpoints and run provenance. Training and KD consume every `num_queries` prediction. PyTorch validation computes official-compatible all-query sAP and deployment top-`num_select` sAP together, while postprocessing, ONNX/TensorRT output, end-to-end Torch timing, and ONNX sAP parity apply the class-0 top `num_select` contract. This keeps published-accuracy comparison separate from the configured 200--500-output deployment tuning axis. CUDA training uses fused AdamW, while CPU diagnostics automatically retain the same AdamW equations without requesting the CUDA kernel. DINO activation checkpointing skips redundant RNG snapshots because every checkpointed block is deterministic; RoPE coordinate randomness is generated outside those blocks. A successful full run additionally writes a hash-bound `run_complete.json`, allowing orchestration to distinguish a finished run from an interrupted checkpoint.
+Full-training configs target one 80--96 GiB GPU with batch 8, no accumulation, and LINEA-style batch multi-scale training; the dedicated S probe above remains fixed at 640 and batch 1 by design. CUDA training DataLoaders pin image/target tensors and use configurable worker prefetching for non-blocking host-to-device transfer. Worker tensor sharing defaults to PyTorch's `file_system` strategy because a large detection batch contains many variable-length target tensors and the `file_descriptor` strategy can exceed the process open-file limit; `multiprocessing_sharing_strategy` is recorded in the resolved config, run manifest, and resume contract. Multi-scale choices are filtered so P3/P4/P5 always contain at least the variant's configured `num_queries` encoder tokens; the actual weighted scale list is stored in checkpoints and run provenance. Training and KD consume every `num_queries` prediction. PyTorch validation computes official-compatible all-query sAP and deployment top-`num_select` sAP together, while postprocessing, ONNX/TensorRT output, end-to-end Torch timing, and ONNX sAP parity apply the class-0 top `num_select` contract. This keeps published-accuracy comparison separate from the configured 200--500-output deployment tuning axis. CUDA training uses fused AdamW, while CPU diagnostics automatically retain the same AdamW equations without requesting the CUDA kernel. DINO activation checkpointing skips redundant RNG snapshots because every checkpointed block is deterministic; RoPE coordinate randomness is generated outside those blocks. A successful full run additionally writes a hash-bound `run_complete.json`, allowing orchestration to distinguish a finished run from an interrupted checkpoint.
 
 All compact and official DINO variants cache the most recent deterministic RoPE sin/cos tensors during evaluation. The cache is keyed by resolution, device, dtype, normalization mode, and the periods-buffer version, and is bypassed for training, tracing, and ONNX export. This accelerates both fixed-shape deployment and repeated online-teacher inference without changing stochastic training or exported graphs. RoPE sin/cos remain at their natural half-head width and are applied directly to the two value halves, rather than duplicating them before every block. This halves their generated and cached tensor footprint while remaining bit-identical to the legacy full-width equation on CPU and CUDA. Full-width inputs remain supported. During Torch `no_grad` inference, compact and official DINO attention also writes those same rotated patch values back into the fresh Q/K projection storage. This removes the per-block rotated-patch and prefix-concatenation tensors; training, tracing, and ONNX export retain the ordinary functional expression.
 
@@ -286,7 +286,7 @@ Parquet can help when metadata filtering or remote columnar analytics dominates,
 
 ## A–X supervised workflow without distillation
 
-A, F, P, N, S, M, L, and X can all be trained without a teacher. Use the normal variant config for A/F/P/N/M/L/X and the full-training S baseline config shown below; do not use anything under `configs/lineae/distill/`. Every listed config has `distill_weight=0.0`, so neither `ckpts/lineae_xl_teacher.pth` nor any other qualified teacher artifact is required.
+A, F, P, N, S, M, L, and X can all be trained without a teacher through the same top-level `configs/lineae/lineae_<variant>.py` convention; do not use anything under `configs/lineae/distill/`. Every listed config has `distill_weight=0.0`, so neither `ckpts/lineae_xl_teacher.pth` nor any other qualified teacher artifact is required.
 
 | Variant | Supervised config | Default epochs |
 | --- | --- | --: |
@@ -294,12 +294,12 @@ A, F, P, N, S, M, L, and X can all be trained without a teacher. Use the normal 
 | F | `configs/lineae/lineae_f.py` | 66 |
 | P | `configs/lineae/lineae_p.py` | 60 |
 | N | `configs/lineae/lineae_n.py` | 72 |
-| S | `configs/lineae/baselines/lineae_s.py` | 45 |
+| S | `configs/lineae/lineae_s.py` | 45 |
 | M | `configs/lineae/lineae_m.py` | 45 |
 | L | `configs/lineae/lineae_l.py` | 40 |
 | X | `configs/lineae/lineae_x.py` | 35 |
 
-For A/F/P/N/M/L/X, set `VARIANT` to exactly one lowercase name and start that single run. The committed config supplies its capacity-aware epoch budget, batch 8, no accumulation, multi-scale training, cosine LR, backbone initialization, and progressive unfreezing where applicable:
+Set `VARIANT` to exactly one of `a`, `f`, `p`, `n`, `s`, `m`, `l`, or `x` and start that single run. The committed config supplies its capacity-aware epoch budget, batch 8, no accumulation, multi-scale training, cosine LR, backbone initialization, and progressive unfreezing where applicable:
 
 ```bash
 VARIANT=x
@@ -313,20 +313,7 @@ uv run --locked python main.py \
 --options output_dir="outputs/lineae_${VARIANT}-nokd-seed42"
 ```
 
-S uses a separate full-training config because `configs/lineae/lineae_s.py` remains the batch-1 pipeline probe:
-
-```bash
-uv run --locked python main.py \
--c configs/lineae/baselines/lineae_s.py \
---coco_path data/wireframe_processed \
---device cuda \
---amp \
---num_workers 8 \
---seed 42 \
---options output_dir=outputs/lineae_s-nokd-seed42
-```
-
-The S backbone initialization file is named `ckpts/vitt_distill.pt`, but it is only a pretrained backbone weight. Its filename does not enable online teacher inference or a distillation loss in this supervised run.
+The S backbone initialization file is named `ckpts/vitt_distill.pt`, but it is only a pretrained backbone weight. Its filename does not enable online teacher inference or a distillation loss in this supervised run. Use the separately documented `configs/lineae/probes/lineae_s.py` only for a bounded batch-1 pipeline diagnostic.
 
 ## XL teacher workflow
 

@@ -48,6 +48,7 @@ class TinyModel(nn.Module):
         "configs/lineae/lineae_xl.py",
         "configs/lineae/lineae_2xl.py",
         "configs/lineae/lineae_3xl.py",
+        "configs/lineae/probes/lineae_s.py",
     ],
 )
 def test_periodic_checkpoint_snapshots_are_disabled_by_default(config_path):
@@ -685,7 +686,7 @@ def test_resume_rejects_changed_architecture_loss_and_data_semantics(
 def test_all_dino_training_recipes_reach_full_unfreeze_before_training_ends():
     paths = (
         "configs/lineae/lineae_s.py",
-        "configs/lineae/baselines/lineae_s.py",
+        "configs/lineae/probes/lineae_s.py",
         "configs/lineae/lineae_m.py",
         "configs/lineae/lineae_l.py",
         "configs/lineae/lineae_x.py",
