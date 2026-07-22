@@ -289,6 +289,34 @@ One monolithic Parquet file is not recommended for this dataset. The copied tree
 
 Parquet can help when metadata filtering or remote columnar analytics dominates, but that is not this training access pattern. If profiling on network/object storage later shows filesystem metadata as the bottleneck, prefer multiple deterministic shards (Parquet row groups or tar/WebDataset shards), preserve the COCO image/annotation identity in the run manifest, and benchmark throughput and shuffle quality against the current loader before changing the default.
 
+### Annotation visualization
+
+`data/annotation_rendering.py` renders every GT line from a COCO line-annotation JSON directly over the original, unresized image with OpenCV. It interprets each stored `line` as `[x, y, dx, dy]`, converts it to `(x, y) -> (x + dx, y + dy)`, and clips both endpoints exactly as the training dataset does. With no arguments it renders all 462 Wireframe validation images as PNG files under `data/test_render/`:
+
+```bash
+uv run --locked python data/annotation_rendering.py
+```
+
+The output directory is protected against accidental replacement. Use `--overwrite` to regenerate it, or `--limit` to render only the first records for a quick inspection:
+
+```bash
+uv run --locked python data/annotation_rendering.py --limit 10 --overwrite
+```
+
+York validation or Wireframe training annotations use the same renderer by selecting their JSON and image directory. Choose a distinct output directory when retaining multiple rendered sets:
+
+```bash
+uv run --locked python data/annotation_rendering.py \
+--annotation-file data/york_processed/annotations/lines_val2017.json \
+--image-dir data/york_processed/val2017 \
+--output-dir /tmp/lineae_york_annotation_render
+
+uv run --locked python data/annotation_rendering.py \
+--annotation-file data/wireframe_processed/annotations/lines_train2017.json \
+--image-dir data/wireframe_processed/train2017 \
+--output-dir /tmp/lineae_wireframe_train_annotation_render
+```
+
 ## A–X supervised workflow without distillation
 
 A, F, P, N, T, S, M, L, and X can all be trained without a teacher through the same top-level `configs/lineae/lineae_<variant>.py` convention; do not use anything under `configs/lineae/distill/`. Every listed config has `distill_weight=0.0`, so neither `ckpts/lineae_xl_teacher.pth` nor any other qualified teacher artifact is required.

@@ -226,6 +226,7 @@ __marimo__/
 # Local datasets, training artifacts, and exported engines
 data/wireframe*/
 data/york*/
+data/test_render/
 outputs/
 runs/
 *.engine
