@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import torch
+import torch.distributed as dist
 from scipy.optimize import linear_sum_assignment
 from torch import Tensor, nn
 import torch.nn.functional as F
@@ -173,6 +174,10 @@ class LineSetDistillationCriterion(nn.Module):
         temperature_start: float = 1.0,
         temperature_end: float = 4.0,
         temperature_steps: int = 0,
+        matching_mode: str = "independent",
+        student_matcher=None,
+        teacher_gt_max_distance: float = 10.0,
+        confidence_power: float = 0.0,
     ) -> None:
         super().__init__()
         if not 0.0 <= confidence_threshold <= 1.0:
@@ -189,6 +194,16 @@ class LineSetDistillationCriterion(nn.Module):
             raise ValueError("feature_loss must be 'cosine' or 'mse'")
         if min(temperature_start, temperature_end) <= 0:
             raise ValueError("distillation temperatures must be positive")
+        if matching_mode not in {"independent", "gt_anchored"}:
+            raise ValueError(
+                "distillation matching_mode must be 'independent' or 'gt_anchored'"
+            )
+        if matching_mode == "gt_anchored" and student_matcher is None:
+            raise ValueError("gt_anchored distillation requires the supervised student matcher")
+        if teacher_gt_max_distance <= 0:
+            raise ValueError("teacher_gt_max_distance must be positive")
+        if confidence_power < 0:
+            raise ValueError("confidence_power must be non-negative")
 
         self.confidence_threshold = float(confidence_threshold)
         self.top_k = int(top_k)
@@ -202,10 +217,21 @@ class LineSetDistillationCriterion(nn.Module):
         self.warmup_steps = max(0, int(warmup_steps))
         self.temperature_start = float(temperature_start)
         self.temperature_end = float(temperature_end)
+        self.matching_mode = matching_mode
+        self.student_matcher = student_matcher
+        self.teacher_gt_max_distance = float(teacher_gt_max_distance)
+        self.confidence_power = float(confidence_power)
         temperature_steps = int(temperature_steps)
         if temperature_steps < -1:
             raise ValueError("temperature_steps must be -1 or non-negative")
         self.temperature_steps = None if temperature_steps == -1 else temperature_steps
+        self.last_match_count = 0
+        self.last_teacher_candidate_count = 0
+        self.last_teacher_rejected_count = 0
+        self.last_target_count = 0
+        self.last_match_weight_sum = 0.0
+        self.last_mean_confidence = 0.0
+        self.last_target_coverage = 0.0
 
     def set_temperature_steps(self, steps: int) -> None:
         steps = int(steps)
@@ -251,7 +277,11 @@ class LineSetDistillationCriterion(nn.Module):
         return selected
 
     @torch.no_grad()
-    def match(self, student_outputs: dict[str, Tensor], teacher_outputs: dict[str, Tensor]):
+    def _match_independent(
+        self,
+        student_outputs: dict[str, Tensor],
+        teacher_outputs: dict[str, Tensor],
+    ):
         self._validate_outputs(student_outputs, teacher_outputs)
         batch_size = student_outputs["pred_logits"].shape[0]
         matches = [None] * batch_size
@@ -291,6 +321,206 @@ class LineSetDistillationCriterion(nn.Module):
             matches[batch_index] = (student_index, teacher_indices[filtered_index])
         if any(match is None for match in matches):
             raise RuntimeError("distillation matching did not resolve every batch item")
+        weights = []
+        for batch_index, (_, teacher_index) in enumerate(matches):
+            confidence = teacher_outputs["pred_logits"][
+                batch_index, teacher_index, 0
+            ].float().sigmoid()
+            weights.append(self._confidence_weights(confidence))
+        return matches, weights
+
+    @staticmethod
+    def _paired_sap_distance(lines: Tensor, targets: Tensor) -> Tensor:
+        """Evaluator-equivalent squared endpoint distance for paired normalized lines."""
+        if lines.shape != targets.shape or lines.ndim != 2 or lines.shape[-1] != 4:
+            raise ValueError(
+                "paired sAP distance expects equally shaped [N, 4] line tensors"
+            )
+        predicted = lines.float().reshape(-1, 2, 2) * 128.0
+        ground_truth = targets.float().reshape(-1, 2, 2) * 128.0
+        direct = (predicted - ground_truth).square().sum(dim=(1, 2))
+        swapped = (
+            predicted - ground_truth[:, [1, 0], :]
+        ).square().sum(dim=(1, 2))
+        return torch.minimum(direct, swapped)
+
+    def _confidence_weights(self, confidence: Tensor) -> Tensor:
+        confidence = confidence.detach().float()
+        if self.confidence_power == 0:
+            return torch.ones_like(confidence)
+        return confidence.pow(self.confidence_power)
+
+    @torch.no_grad()
+    def _match_gt_anchored(
+        self,
+        student_outputs: dict[str, Tensor],
+        teacher_outputs: dict[str, Tensor],
+        targets,
+    ):
+        self._validate_outputs(student_outputs, teacher_outputs)
+        batch_size = student_outputs["pred_logits"].shape[0]
+        if not isinstance(targets, (list, tuple)) or len(targets) != batch_size:
+            raise ValueError("gt_anchored distillation requires one target dictionary per image")
+        for batch_index, target in enumerate(targets):
+            if not isinstance(target, dict):
+                raise TypeError(f"distillation target {batch_index} must be a dictionary")
+            lines = target.get("lines")
+            if not isinstance(lines, Tensor) or lines.ndim != 2 or lines.shape[-1] != 4:
+                raise ValueError(
+                    f"distillation target {batch_index} must contain [N, 4] lines"
+                )
+
+        student_matches = self.student_matcher(student_outputs, targets)
+        if len(student_matches) != batch_size:
+            raise RuntimeError("supervised matcher did not return one assignment per image")
+
+        teacher_candidates = []
+        pending_costs = []
+        pending = []
+        teacher_to_gt = [None] * batch_size
+        for batch_index, (teacher_logits, teacher_lines, target) in enumerate(zip(
+            teacher_outputs["pred_logits"],
+            teacher_outputs["pred_lines"],
+            targets,
+            strict=True,
+        )):
+            candidate_indices = self._teacher_indices(teacher_logits)
+            teacher_candidates.append(candidate_indices)
+            target_lines = target["lines"]
+            if candidate_indices.numel() == 0 or target_lines.shape[0] == 0:
+                empty = torch.empty(0, dtype=torch.long, device=teacher_logits.device)
+                teacher_to_gt[batch_index] = (empty, empty)
+                continue
+            confidence = teacher_logits[candidate_indices, 0].float().sigmoid()
+            line_cost = pairwise_endpoint_l1(
+                teacher_lines[candidate_indices],
+                target_lines,
+            )
+            class_cost = -confidence[:, None].expand_as(line_cost)
+            pending_costs.append(
+                self.match_cost_class * class_cost
+                + self.match_cost_line * line_cost
+            )
+            pending.append((batch_index, teacher_logits.device, candidate_indices))
+
+        assignments = _batched_linear_sum_assignment(pending_costs)
+        for (batch_index, device, candidate_indices), (
+            candidate_row,
+            target_column,
+        ) in zip(pending, assignments, strict=True):
+            candidate_row = torch.as_tensor(candidate_row, dtype=torch.long, device=device)
+            target_column = torch.as_tensor(target_column, dtype=torch.long, device=device)
+            selected_teacher = candidate_indices[candidate_row]
+            distances = self._paired_sap_distance(
+                teacher_outputs["pred_lines"][batch_index, selected_teacher],
+                targets[batch_index]["lines"][target_column],
+            )
+            accepted = distances < self.teacher_gt_max_distance
+            teacher_to_gt[batch_index] = (
+                selected_teacher[accepted],
+                target_column[accepted],
+            )
+
+        if any(match is None for match in teacher_to_gt):
+            raise RuntimeError("teacher-to-GT matching did not resolve every batch item")
+
+        matches = []
+        weights = []
+        accepted_confidences = []
+        for batch_index, ((student_index, student_gt), (teacher_index, teacher_gt)) in enumerate(
+            zip(student_matches, teacher_to_gt, strict=True)
+        ):
+            device = student_outputs["pred_logits"].device
+            student_index = student_index.to(device=device, dtype=torch.long)
+            student_gt = student_gt.to(device=device, dtype=torch.long)
+            teacher_index = teacher_index.to(device=device, dtype=torch.long)
+            teacher_gt = teacher_gt.to(device=device, dtype=torch.long)
+            if teacher_gt.numel() == 0 or student_gt.numel() == 0:
+                student_tensor = torch.empty(0, dtype=torch.long, device=device)
+                teacher_tensor = torch.empty(0, dtype=torch.long, device=device)
+            else:
+                same_gt = teacher_gt[:, None] == student_gt[None, :]
+                present = same_gt.any(dim=1)
+                student_column = same_gt.to(dtype=torch.int8).argmax(dim=1)
+                student_tensor = student_index[student_column[present]]
+                teacher_tensor = teacher_index[present]
+            matches.append((student_tensor, teacher_tensor))
+            confidence = teacher_outputs["pred_logits"][
+                batch_index, teacher_tensor, 0
+            ].float().sigmoid()
+            accepted_confidences.append(confidence)
+            weights.append(self._confidence_weights(confidence))
+
+        self.last_teacher_candidate_count = sum(
+            int(indices.numel()) for indices in teacher_candidates
+        )
+        self.last_target_count = sum(int(target["lines"].shape[0]) for target in targets)
+        accepted_count = sum(int(weight.numel()) for weight in weights)
+        self.last_teacher_rejected_count = (
+            self.last_teacher_candidate_count - accepted_count
+        )
+        all_weights = torch.cat(weights) if weights else torch.empty(0)
+        all_confidence = (
+            torch.cat(accepted_confidences)
+            if accepted_confidences
+            else torch.empty(0)
+        )
+        self.last_match_weight_sum = (
+            float(all_weights.sum()) if all_weights.numel() else 0.0
+        )
+        self.last_mean_confidence = (
+            float(all_confidence.mean())
+            if accepted_count
+            else 0.0
+        )
+        self.last_target_coverage = (
+            accepted_count / self.last_target_count if self.last_target_count else 0.0
+        )
+        return matches, weights
+
+    @torch.no_grad()
+    def _resolve_matches(
+        self,
+        student_outputs: dict[str, Tensor],
+        teacher_outputs: dict[str, Tensor],
+        targets=None,
+    ):
+        if self.matching_mode == "gt_anchored":
+            return self._match_gt_anchored(student_outputs, teacher_outputs, targets)
+        matches, weights = self._match_independent(student_outputs, teacher_outputs)
+        self.last_teacher_candidate_count = sum(
+            int(teacher_index.numel()) for _, teacher_index in matches
+        )
+        self.last_teacher_rejected_count = 0
+        self.last_target_count = 0
+        all_weights = torch.cat(weights) if weights else torch.empty(0)
+        confidences = [
+            teacher_outputs["pred_logits"][batch_index, teacher_index, 0]
+            .float()
+            .sigmoid()
+            for batch_index, (_, teacher_index) in enumerate(matches)
+        ]
+        all_confidence = torch.cat(confidences) if confidences else torch.empty(0)
+        self.last_match_weight_sum = (
+            float(all_weights.sum()) if all_weights.numel() else 0.0
+        )
+        count = sum(int(weight.numel()) for weight in weights)
+        self.last_mean_confidence = (
+            float(all_confidence.mean())
+            if count
+            else 0.0
+        )
+        self.last_target_coverage = 0.0
+        return matches, weights
+
+    @torch.no_grad()
+    def match(
+        self,
+        student_outputs: dict[str, Tensor],
+        teacher_outputs: dict[str, Tensor],
+        targets=None,
+    ):
+        matches, _ = self._resolve_matches(student_outputs, teacher_outputs, targets)
         return matches
 
     @staticmethod
@@ -311,16 +541,56 @@ class LineSetDistillationCriterion(nn.Module):
             raise ValueError("student and teacher class counts differ")
 
     @staticmethod
-    def _bernoulli_kl(student_logits: Tensor, teacher_logits: Tensor, temperature: float) -> Tensor:
+    def _weighted_reduce(values: Tensor, weights: Tensor | None, normalizer: float | None):
+        if values.ndim != 1:
+            raise ValueError("weighted distillation reduction expects one value per match")
+        if weights is None:
+            weighted = values
+            denominator = float(values.numel()) if normalizer is None else float(normalizer)
+        else:
+            if weights.shape != values.shape:
+                raise ValueError("distillation confidence weights must match per-pair losses")
+            weighted = values * weights.to(device=values.device, dtype=values.dtype)
+            denominator = (
+                float(weights.sum()) if normalizer is None else float(normalizer)
+            )
+        return weighted.sum() / max(denominator, 1e-12)
+
+    @staticmethod
+    def _distributed_target_normalizer(target_count: int, device: torch.device) -> float:
+        count = torch.tensor([target_count], dtype=torch.float32, device=device)
+        if dist.is_available() and dist.is_initialized():
+            dist.all_reduce(count)
+            count /= dist.get_world_size()
+        return max(float(count.item()), 1.0)
+
+    @staticmethod
+    def _bernoulli_kl(
+        student_logits: Tensor,
+        teacher_logits: Tensor,
+        temperature: float,
+        *,
+        weights: Tensor | None = None,
+        normalizer: float | None = None,
+    ) -> Tensor:
         student = student_logits.float() / temperature
         teacher = teacher_logits.detach().float() / temperature
         probability = teacher.sigmoid()
         cross_entropy = probability * F.softplus(-student) + (1.0 - probability) * F.softplus(student)
         teacher_entropy = probability * F.softplus(-teacher) + (1.0 - probability) * F.softplus(teacher)
-        return (cross_entropy - teacher_entropy).clamp_min(0).mean() * (temperature ** 2)
+        per_pair = (cross_entropy - teacher_entropy).clamp_min(0).mean(dim=-1)
+        return LineSetDistillationCriterion._weighted_reduce(
+            per_pair, weights, normalizer
+        ) * (temperature ** 2)
 
     @staticmethod
-    def _line_loss(student_lines: Tensor, teacher_lines: Tensor) -> Tensor:
+    def _line_loss(
+        student_lines: Tensor,
+        teacher_lines: Tensor,
+        *,
+        weights: Tensor | None = None,
+        normalizer: float | None = None,
+    ) -> Tensor:
         teacher_lines = teacher_lines.detach()
         direct = F.smooth_l1_loss(student_lines, teacher_lines, reduction="none").sum(dim=-1)
         swapped = F.smooth_l1_loss(
@@ -328,7 +598,11 @@ class LineSetDistillationCriterion(nn.Module):
             endpoint_swap(teacher_lines),
             reduction="none",
         ).sum(dim=-1)
-        return endpoint_invariant_loss(direct, swapped).mean()
+        return LineSetDistillationCriterion._weighted_reduce(
+            endpoint_invariant_loss(direct, swapped),
+            weights,
+            normalizer,
+        )
 
     def _feature_loss(self, student_outputs, teacher_outputs) -> Tensor | None:
         if self.feature_weight == 0:
@@ -374,14 +648,20 @@ class LineSetDistillationCriterion(nn.Module):
         teacher_outputs: dict[str, Tensor],
         *,
         global_step: int,
+        targets=None,
     ) -> dict[str, Tensor]:
-        matches = self.match(student_outputs, teacher_outputs)
+        matches, match_weights = self._resolve_matches(
+            student_outputs, teacher_outputs, targets
+        )
         self.last_match_count = sum(student_index.numel() for student_index, _ in matches)
         student_logits = []
         teacher_logits = []
         student_lines = []
         teacher_lines = []
-        for batch_index, (student_index, teacher_index) in enumerate(matches):
+        weights = []
+        for batch_index, ((student_index, teacher_index), image_weights) in enumerate(
+            zip(matches, match_weights, strict=True)
+        ):
             if student_index.numel() == 0:
                 continue
             student_logits.append(
@@ -392,6 +672,7 @@ class LineSetDistillationCriterion(nn.Module):
             )
             student_lines.append(student_outputs["pred_lines"][batch_index, student_index])
             teacher_lines.append(teacher_outputs["pred_lines"][batch_index, teacher_index])
+            weights.append(image_weights)
 
         schedule = self.schedule(global_step)
         zero = student_outputs["pred_logits"].sum() * 0.0
@@ -408,12 +689,28 @@ class LineSetDistillationCriterion(nn.Module):
             })
             return result
 
+        concatenated_weights = torch.cat(weights)
+        normalizer = (
+            self._distributed_target_normalizer(
+                self.last_target_count,
+                student_outputs["pred_logits"].device,
+            )
+            if self.matching_mode == "gt_anchored"
+            else None
+        )
         kd_logits = self._bernoulli_kl(
             torch.cat(student_logits),
             torch.cat(teacher_logits),
             schedule.temperature,
+            weights=concatenated_weights,
+            normalizer=normalizer,
         )
-        kd_line = self._line_loss(torch.cat(student_lines), torch.cat(teacher_lines))
+        kd_line = self._line_loss(
+            torch.cat(student_lines),
+            torch.cat(teacher_lines),
+            weights=concatenated_weights,
+            normalizer=normalizer,
+        )
         result.update({
             "loss_kd_logits": kd_logits * self.class_weight * schedule.weight,
             "loss_kd_line": kd_line * self.line_weight * schedule.weight,
@@ -552,7 +849,11 @@ class DistillationTeacher(nn.Module):
         return None if self.cache is None else self.cache.stats
 
 
-def build_distillation_criterion(args) -> LineSetDistillationCriterion:
+def build_distillation_criterion(
+    args,
+    *,
+    student_matcher=None,
+) -> LineSetDistillationCriterion:
     return LineSetDistillationCriterion(
         confidence_threshold=args.distill_confidence_threshold,
         top_k=args.distill_top_k,
@@ -567,6 +868,12 @@ def build_distillation_criterion(args) -> LineSetDistillationCriterion:
         temperature_start=args.distill_temperature_start,
         temperature_end=args.distill_temperature_end,
         temperature_steps=args.distill_temperature_steps,
+        matching_mode=getattr(args, "distill_matching_mode", "independent"),
+        student_matcher=student_matcher,
+        teacher_gt_max_distance=getattr(
+            args, "distill_teacher_gt_max_distance", 10.0
+        ),
+        confidence_power=getattr(args, "distill_confidence_power", 0.0),
     )
 
 

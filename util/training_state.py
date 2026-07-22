@@ -13,6 +13,7 @@ import torch
 import torch.distributed as dist
 
 from .image_preprocess import validate_checkpoint_image_preprocess
+from models.lineae.backbones.base import unwrap_state_dict
 
 
 CHECKPOINT_FORMAT_VERSION = 2
@@ -136,10 +137,13 @@ RESUME_CRITICAL_FIELDS = (
     "distill_teacher_checkpoint_sha256",
     "distill_allow_unqualified_teacher",
     "distill_teacher_resize",
+    "distill_matching_mode",
     "distill_confidence_threshold",
     "distill_top_k",
     "distill_match_cost_class",
     "distill_match_cost_line",
+    "distill_teacher_gt_max_distance",
+    "distill_confidence_power",
     "distill_class_weight",
     "distill_line_weight",
     "distill_feature_weight",
@@ -157,6 +161,50 @@ RESUME_CRITICAL_FIELDS = (
     "ema_decay",
     "ema_epoch",
     "eval_ema",
+)
+
+
+# Model/preprocessing semantics that must remain identical when a completed
+# training checkpoint is used as fresh model initialization. Optimization,
+# data augmentation, loss, unfreezing, distillation, and runtime settings are
+# deliberately absent: those belong to the new run rather than the source run.
+INITIALIZATION_CRITICAL_FIELDS = (
+    "modelname",
+    "variant",
+    "backbone",
+    "backbone_pyramid_channels",
+    "synthetic_p5_schema",
+    "use_lab",
+    "batch_norm_type",
+    "dino_intermediate_layers",
+    "num_classes",
+    "hybrid_encoder",
+    "hidden_dim",
+    "in_channels_encoder",
+    "feat_channels_decoder",
+    "feat_strides",
+    "num_feature_levels",
+    "nheads",
+    "dim_feedforward",
+    "dropout",
+    "transformer_activation",
+    "pre_norm",
+    "query_dim",
+    "dec_n_points",
+    "reg_max",
+    "reg_scale",
+    "eval_idx",
+    "expansion",
+    "depth_mult",
+    "pe_temperatureH",
+    "pe_temperatureW",
+    "dec_layers",
+    "num_queries",
+    "embed_init_tgt",
+    "image_preprocess_schema",
+    "image_mean",
+    "image_std",
+    "eval_spatial_size",
 )
 
 
@@ -369,6 +417,130 @@ def validate_resume_checkpoint(checkpoint: Mapping[str, Any], args: Any) -> None
                     f"resume config mismatch for {field}: checkpoint={saved!r}, "
                     f"current={current!r}"
                 )
+
+
+def validate_initialization_checkpoint(
+    checkpoint: Mapping[str, Any], args: Any
+) -> Mapping[str, torch.Tensor]:
+    """Validate a completed full-model checkpoint for a fresh training run."""
+    if not isinstance(checkpoint, Mapping):
+        raise TypeError("initialization checkpoint must be a mapping")
+    required = {"format_version", "model", "epoch", "epoch_complete", "config", "inference_model"}
+    missing = sorted(required - checkpoint.keys())
+    if missing:
+        raise ValueError(
+            f"initialization checkpoint is missing required fields: {missing}"
+        )
+    if checkpoint["epoch_complete"] is not True:
+        raise ValueError("initialization checkpoint must represent a completed epoch")
+    version = checkpoint.get("format_version", 0)
+    if version != CHECKPOINT_FORMAT_VERSION:
+        raise ValueError(
+            "unsupported initialization checkpoint format version "
+            f"{version}; expected {CHECKPOINT_FORMAT_VERSION}"
+        )
+    validate_checkpoint_image_preprocess(checkpoint)
+    saved_config = checkpoint["config"]
+    if not isinstance(saved_config, Mapping):
+        raise TypeError("initialization checkpoint config must be a mapping")
+
+    for field in INITIALIZATION_CRITICAL_FIELDS:
+        if not hasattr(args, field):
+            continue
+        if field not in saved_config:
+            raise ValueError(
+                f"initialization checkpoint is missing model semantic field {field!r}"
+            )
+        saved = _canonical_config_value(saved_config[field])
+        current = _canonical_config_value(getattr(args, field))
+        if saved != current:
+            raise ValueError(
+                f"initialization config mismatch for {field}: "
+                f"checkpoint={saved!r}, current={current!r}"
+            )
+    return unwrap_state_dict(checkpoint)
+
+
+def initialize_model_from_checkpoint(
+    checkpoint: Mapping[str, Any],
+    *,
+    model: torch.nn.Module,
+    args: Any,
+) -> dict[str, Any]:
+    """Strict-load only selected model weights after a mutation-free preflight."""
+    source_state = validate_initialization_checkpoint(checkpoint, args)
+    target_state = model.state_dict()
+    source_keys = set(source_state)
+    target_keys = set(target_state)
+    missing = sorted(target_keys - source_keys)
+    unexpected = sorted(source_keys - target_keys)
+    feature_projection_prefix = "distill_feature_projections."
+    target_feature_projection_keys = {
+        key for key in target_keys if key.startswith(feature_projection_prefix)
+    }
+    feature_kd_enabled = float(getattr(args, "distill_feature_weight", 0.0)) > 0
+    allowed_missing = sorted(
+        key
+        for key in missing
+        if feature_kd_enabled and key in target_feature_projection_keys
+    )
+    allowed_missing_set = set(allowed_missing)
+    rejected_missing = sorted(set(missing) - allowed_missing_set)
+    allowed_unexpected = sorted(
+        key
+        for key in unexpected
+        if not target_feature_projection_keys
+        and key.startswith(feature_projection_prefix)
+    )
+    allowed_unexpected_set = set(allowed_unexpected)
+    rejected_unexpected = sorted(set(unexpected) - allowed_unexpected_set)
+    incompatible = sorted(
+        key
+        for key in source_keys & target_keys
+        if (
+            source_state[key].shape != target_state[key].shape
+            or source_state[key].dtype != target_state[key].dtype
+        )
+    )
+    if rejected_missing or rejected_unexpected or incompatible:
+        details = []
+        if rejected_missing:
+            details.append(f"missing={rejected_missing[:5]}")
+        if rejected_unexpected:
+            details.append(f"unexpected={rejected_unexpected[:5]}")
+        if incompatible:
+            key = incompatible[0]
+            details.append(
+                "shape_or_dtype="
+                f"{key}: checkpoint={tuple(source_state[key].shape)}/{source_state[key].dtype}, "
+                f"model={tuple(target_state[key].shape)}/{target_state[key].dtype}"
+            )
+        raise ValueError(
+            "initialization checkpoint model state mismatch: " + "; ".join(details)
+        )
+
+    loadable_state = {
+        key: value
+        for key, value in source_state.items()
+        if key not in allowed_unexpected_set
+    }
+    incompatible_keys = model.load_state_dict(loadable_state, strict=False)
+    if (
+        set(incompatible_keys.missing_keys) != allowed_missing_set
+        or incompatible_keys.unexpected_keys
+    ):
+        raise RuntimeError(
+            "initialization load did not match its preflight-approved feature keys"
+        )
+    return {
+        "source_epoch": int(checkpoint["epoch"]),
+        "inference_model": checkpoint["inference_model"],
+        "tensor_count": len(source_state),
+        "loaded_tensor_count": len(loadable_state),
+        "new_state_keys": allowed_missing,
+        "ignored_source_keys": allowed_unexpected,
+        "strict_shared_state": True,
+    }
 
 
 def restore_training_checkpoint(

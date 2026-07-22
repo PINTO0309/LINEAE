@@ -25,4 +25,4 @@ use_ema = False
 dino_intermediate_layers = []
 distill_weight = 0.0
 distill_feature_weight = 0.0
-epochs = 60
+epochs = 50

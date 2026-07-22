@@ -249,6 +249,10 @@ def render_annotations(
         flags = cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION
         for record in selected_records:
             image_path = image_dir / record["file_name"]
+            if not image_path.is_file():
+                raise FileNotFoundError(
+                    f"source image {record['id']} does not exist: {image_path}"
+                )
             image = cv2.imread(str(image_path), flags)
             if image is None:
                 raise RuntimeError(

@@ -173,6 +173,11 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         with sync_context:
             kd_schedule = None
             kd_match_count = None
+            kd_candidate_count = None
+            kd_rejected_count = None
+            kd_target_coverage = None
+            kd_mean_confidence = None
+            kd_match_weight_sum = None
             kd_overhead_ms = None
             with torch.amp.autocast(str(device), enabled=args.amp):
                 if step_profiler is not None:
@@ -194,11 +199,27 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                         outputs,
                         teacher_outputs,
                         global_step=global_step,
+                        targets=targets,
                     )
                     if step_profiler is not None:
                         step_profiler.stop('kd_loss_ms')
                     kd_schedule = distillation_criterion.schedule(global_step)
                     kd_match_count = distillation_criterion.last_match_count
+                    kd_candidate_count = (
+                        distillation_criterion.last_teacher_candidate_count
+                    )
+                    kd_rejected_count = (
+                        distillation_criterion.last_teacher_rejected_count
+                    )
+                    kd_target_coverage = (
+                        distillation_criterion.last_target_coverage
+                    )
+                    kd_mean_confidence = (
+                        distillation_criterion.last_mean_confidence
+                    )
+                    kd_match_weight_sum = (
+                        distillation_criterion.last_match_weight_sum
+                    )
                     # Hungarian matching batches all non-empty image costs into
                     # one CPU transfer, which synchronizes preceding CUDA work and
                     # makes this wall time a meaningful online-KD measurement.
@@ -304,6 +325,11 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 'global_step': global_step,
                 'loss': loss_value,
                 'kd_matches': kd_match_count,
+                'kd_candidates': kd_candidate_count,
+                'kd_rejected': kd_rejected_count,
+                'kd_target_coverage': kd_target_coverage,
+                'kd_mean_confidence': kd_mean_confidence,
+                'kd_match_weight_sum': kd_match_weight_sum,
                 'kd_weight': kd_schedule.weight if kd_schedule is not None else 0.0,
                 'kd_temperature': (
                     kd_schedule.temperature if kd_schedule is not None else None
@@ -327,6 +353,11 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 kd_weight=kd_schedule.weight,
                 kd_temperature=kd_schedule.temperature,
                 kd_matches=kd_match_count,
+                kd_candidates=kd_candidate_count,
+                kd_rejected=kd_rejected_count,
+                kd_target_coverage=kd_target_coverage,
+                kd_mean_confidence=kd_mean_confidence,
+                kd_match_weight_sum=kd_match_weight_sum,
                 kd_overhead_ms=kd_overhead_ms,
             )
 
@@ -359,6 +390,27 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     'Distillation/temperature', kd_schedule.temperature, optimizer_global_step
                 )
                 writer.add_scalar('Distillation/matches', kd_match_count, optimizer_global_step)
+                writer.add_scalar(
+                    'Distillation/candidates', kd_candidate_count, optimizer_global_step
+                )
+                writer.add_scalar(
+                    'Distillation/rejected', kd_rejected_count, optimizer_global_step
+                )
+                writer.add_scalar(
+                    'Distillation/target_coverage',
+                    kd_target_coverage,
+                    optimizer_global_step,
+                )
+                writer.add_scalar(
+                    'Distillation/mean_confidence',
+                    kd_mean_confidence,
+                    optimizer_global_step,
+                )
+                writer.add_scalar(
+                    'Distillation/match_weight_sum',
+                    kd_match_weight_sum,
+                    optimizer_global_step,
+                )
                 writer.add_scalar(
                     'Distillation/overhead_ms', kd_overhead_ms, optimizer_global_step
                 )

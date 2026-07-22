@@ -52,7 +52,11 @@ def _jsonable(value: Any):
     return repr(value)
 
 
-def _file_record(path_value: str | Path | None) -> dict[str, Any] | None:
+def _file_record(
+    path_value: str | Path | None,
+    *,
+    known_sha256: str | None = None,
+) -> dict[str, Any] | None:
     if not path_value:
         return None
     path = Path(path_value)
@@ -62,7 +66,7 @@ def _file_record(path_value: str | Path | None) -> dict[str, Any] | None:
         "path": str(path.resolve()),
         "exists": True,
         "size_bytes": path.stat().st_size,
-        "sha256": sha256_file(path),
+        "sha256": known_sha256 or sha256_file(path),
     }
 
 
@@ -112,6 +116,17 @@ def write_experiment_records(
         else None
     )
     cuda_properties = torch.cuda.get_device_properties(cuda_device) if cuda_device else None
+    model_initialization_record = _file_record(
+        getattr(args, "init_checkpoint", None),
+        known_sha256=getattr(args, "init_checkpoint_sha256", None),
+    )
+    initialization_load_report = getattr(
+        args, "init_checkpoint_load_report", None
+    )
+    if model_initialization_record is not None and initialization_load_report is not None:
+        model_initialization_record["load_report"] = _jsonable(
+            initialization_load_report
+        )
     manifest = {
         "command": [sys.executable, *sys.argv],
         "config_file": str(Path(args.config_file).resolve()),
@@ -126,6 +141,7 @@ def write_experiment_records(
         },
         "checkpoints": {
             "initialization": _file_record(getattr(args, "backbone_weights", None)),
+            "model_initialization": model_initialization_record,
             "resume": _file_record(getattr(args, "resume", None)),
             "teacher": _file_record(
                 getattr(args, "distill_teacher_checkpoint", None)

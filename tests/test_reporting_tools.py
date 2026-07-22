@@ -458,6 +458,11 @@ def test_readme_documents_every_tensorboard_scalar_family():
         "Distillation/weight",
         "Distillation/temperature",
         "Distillation/matches",
+        "Distillation/candidates",
+        "Distillation/rejected",
+        "Distillation/target_coverage",
+        "Distillation/mean_confidence",
+        "Distillation/match_weight_sum",
         "Distillation/overhead_ms",
         "Test/loss",
         "Test/loss_logits",
@@ -491,6 +496,23 @@ def test_readme_documents_exact_xl_resume_command():
     assert "epochs=36" in xl_workflow
     assert "gradient_accumulation_steps=1" in xl_workflow
     assert "use_checkpoint=False" in xl_workflow
+
+
+def test_readme_documents_fresh_best_checkpoint_initialization():
+    readme = Path("README.md").read_text(encoding="utf-8")
+    section = readme.split("### Fresh training from best full-model weights", 1)[1].split(
+        "Full-training configs", 1
+    )[0]
+    assert "`--init-checkpoint`" in section
+    assert "mutually exclusive with `--resume`" in section
+    assert "epoch 0/global step 0" in section
+    assert "VARIANT=n" in section
+    assert "lineae_${VARIANT}-nokd-full-unfreeze-seed42/checkpoint_best.pth" in section
+    assert "lineae_${VARIANT}-nokd-init-best-seed43" in section
+    assert "Set `VARIANT` to exactly `n` or `s`" in section
+    assert "`distill_feature_projections.*`" in section
+    assert "not a general `strict=False` escape hatch" in section
+    assert "newly initialized keys" in section
 
 
 def test_readme_documents_a_through_x_supervised_commands():

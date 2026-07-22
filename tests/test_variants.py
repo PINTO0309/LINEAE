@@ -63,20 +63,20 @@ NO_KD_EPOCHS = {
     "L": 40,
     "X": 35,
     "XL": 36,
-    "2XL": 60,
-    "3XL": 72,
+    "2XL": 50,
+    "3XL": 50,
 }
 
 DISTILL_EPOCHS = {
-    "A": 60,
-    "F": 55,
-    "P": 50,
-    "N": 50,
-    "T": 45,
-    "S": 40,
-    "M": 40,
-    "L": 30,
-    "X": 30,
+    "A": 72,
+    "F": 66,
+    "P": 60,
+    "N": 72,
+    "T": 60,
+    "S": 45,
+    "M": 45,
+    "L": 40,
+    "X": 35,
 }
 
 
@@ -333,9 +333,16 @@ def test_distillation_configs_are_enabled_and_require_qualified_teacher(variant,
     config.distill_teacher_checkpoint = str(tmp_path / "missing_teacher.pth")
     assert config.distill_weight > 0
     assert config.distill_teacher_resize is True
+    assert config.distill_matching_mode == "gt_anchored"
+    assert config.distill_confidence_threshold == 0.5
+    assert config.distill_teacher_gt_max_distance == 10.0
+    assert config.distill_confidence_power == 1.0
+    assert config.distill_class_weight == 0.25
+    assert config.distill_line_weight == 5.0
+    assert config.distill_warmup_steps == 6250
     assert config.distill_temperature_start == 1.0
-    assert config.distill_temperature_end == 4.0
-    assert config.distill_temperature_steps == -1
+    assert config.distill_temperature_end == 1.0
+    assert config.distill_temperature_steps == 0
     with pytest.raises(FileNotFoundError, match="teacher checkpoint is missing"):
         build_frozen_teacher(config, "cpu")
 
@@ -387,8 +394,8 @@ def test_full_lineae_recipes_restore_linea_multiscale_training(variant):
 
 
 @pytest.mark.parametrize(
-    "variant,batch_size,accumulation,epochs,initial_depth",
-    [("2XL", 4, 2, 60, 4), ("3XL", 2, 4, 72, 6)],
+    "variant,batch_size,accumulation,epochs,initial_depth,unfreeze_interval",
+    [("2XL", 4, 2, 50, 4, 2), ("3XL", 2, 4, 50, 6, 1)],
 )
 def test_accuracy_tier_large_recipes_keep_effective_batch_and_xl_head(
     variant,
@@ -396,6 +403,7 @@ def test_accuracy_tier_large_recipes_keep_effective_batch_and_xl_head(
     accumulation,
     epochs,
     initial_depth,
+    unfreeze_interval,
 ):
     config = SLConfig.fromfile(f"configs/lineae/lineae_{variant.lower()}.py")
     assert config.training_profile == "single_gpu_96gb_accuracy"
@@ -420,7 +428,7 @@ def test_accuracy_tier_large_recipes_keep_effective_batch_and_xl_head(
     assert config.epochs == epochs
     assert config.backbone_trainable_layers == initial_depth
     assert config.initial_freeze_epochs == 5
-    assert config.unfreeze_interval == 2
+    assert config.unfreeze_interval == unfreeze_interval
     assert config.in_channels_encoder == [256, 256, 256]
     assert config.hidden_dim == 256
     assert config.dec_layers == 6
@@ -534,7 +542,7 @@ def test_readme_documents_dino_recipe_fully_unfrozen_horizon(label, path):
     "label,path,fully_unfrozen_epoch",
     [
         ("2XL no-KD teacher candidate", "configs/lineae/lineae_2xl.py", 43),
-        ("3XL no-KD teacher candidate", "configs/lineae/lineae_3xl.py", 55),
+        ("3XL no-KD teacher candidate", "configs/lineae/lineae_3xl.py", 30),
     ],
 )
 def test_readme_documents_large_dino_fully_unfrozen_horizon(

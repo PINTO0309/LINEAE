@@ -90,15 +90,22 @@ distill_teacher_checkpoint = 'ckpts/lineae_xl_teacher.pth'
 # Qualified v2 teacher artifacts bind this canonical inference config by hash.
 # Raw/unqualified checkpoints are rejected by default.
 distill_allow_unqualified_teacher = False
-# Match Gazelle's cross-variant KD path: run the teacher at the canonical input
-# declared by its own config. This matters for A/F and tuning candidates whose
-# student resolution differs from XL's 640x640 input.
+# Run the teacher at the canonical input declared by its own config. This
+# matters for A/F and tuning candidates whose student resolution differs from
+# XL's 640x640 input.
 distill_teacher_resize = True
-distill_confidence_threshold = 0.3
+distill_matching_mode = 'gt_anchored'
+distill_confidence_threshold = 0.5
 distill_top_k = 300
 distill_match_cost_class = 2.0
 distill_match_cost_line = 5.0
-distill_class_weight = 1.0
+# Teacher proposals must match one GT under the official sAP10 distance before
+# they can supervise the student query assigned to that same GT.
+distill_teacher_gt_max_distance = 10.0
+distill_confidence_power = 1.0
+# Classification KD dominated the legacy loss and conflicted with supervised
+# focal targets. Keep geometry at its existing scale and make logit KD weak.
+distill_class_weight = 0.25
 distill_line_weight = 5.0
 # Optional projected P3/P4/P5 KD. It is disabled in every default experiment
 # and can be enabled independently after the output-KD control has completed.
@@ -109,13 +116,12 @@ distill_teacher_feature_channels = [256, 256, 256]
 # teacher/config hashes and normalization, so random transforms never alias.
 distill_teacher_cache_dir = ''
 distill_teacher_cache_read_only = False
-distill_warmup_steps = 1000
-# Gazelle progressively softens teacher targets from T=1 to T=4. ``-1``
-# resolves to the final optimizer-step index of the actual full LINEAE run,
-# accounting for dataset length, per-rank batch size, and accumulation.
+distill_warmup_steps = 6250
+# Keep binary logit KD at T=1. With T^2 compensation, the legacy T=1 -> 4
+# schedule increased rather than reduced the measured classification gradient.
 distill_temperature_start = 1.0
-distill_temperature_end = 4.0
-distill_temperature_steps = -1
+distill_temperature_end = 1.0
+distill_temperature_steps = 0
 
 # for ema
 use_ema = False
