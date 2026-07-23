@@ -20,7 +20,7 @@ The authoritative mapping, including exact bootstrap filenames, is in `models/li
 
 The following exact counts are produced from each committed default config with pretrained loading disabled and after `model.deploy()`, matching the graph used by the Torch/ONNX/TensorRT benchmarks. `Backbone` means `model.backbone`: for DINO variants it includes the Simple Feature Pyramid (SFP), and for A/F/P it includes the efficient synthetic P5. `After backbone` is the hybrid encoder plus decoder. Default output-KD adds no student parameters; optional feature-KD projections are training-only and are removed by `deploy()`.
 
-| Variant | Backbone<br>(M) | After<br>Backbone<br>(M) | Total<br>(M) | GFLOPs | WF<br>AP<sup>5</sup> | WF<br>AP<sup>10</sup> | WF<br>AP<sup>15</sup> | YU<br>AP<sup>5</sup> | YU<br>AP<sup>10</sup> | YU<br>AP<sup>15</sup> |
+| Variant | Backbone<br>(M) | After<br>Backbone<br>(M) | Total<br>(M) | GFLOPs | WF<br>AP<sup>5</sup> | 　<br>AP<sup>10</sup> | 　<br>AP<sup>15</sup> | YU<br>AP<sup>5</sup> | 　<br>AP<sup>10</sup> | 　<br>AP<sup>15</sup> |
 | :-----: | -----------: | -----------------: | --------: | -----: | -------------: | --------------: | --------------: | -------------: | --------------: | --------------: |
 | LINEA-N |          1.8 |                2.0 |       3.9 |   11.5 |58.7|65.0|67.9|27.3|30.5|32.5|
 | LINEA-S |          2.2 |                6.2 |       8.4 |   29.4 |58.4|64.7|67.6|28.9|32.6|34.8|
