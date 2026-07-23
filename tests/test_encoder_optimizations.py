@@ -19,6 +19,64 @@ def _encoder():
     )
 
 
+def test_multilevel_encoder_builds_two_independent_stacks_and_applies_dropout():
+    encoder = HybridEncoderAsymConv(
+        in_channels=[32, 32, 32],
+        feat_strides=[8, 16, 32],
+        hidden_dim=32,
+        nhead=4,
+        dim_feedforward=64,
+        dropout=0.1,
+        use_encoder_idx=[1, 2],
+        num_encoder_layers=2,
+        depth_mult=0.34,
+        eval_spatial_size=(64, 64),
+    )
+
+    assert encoder.use_encoder_idx == [1, 2]
+    assert len(encoder.encoder) == 2
+    assert all(stack.num_layers == 2 for stack in encoder.encoder)
+    assert encoder.encoder[0] is not encoder.encoder[1]
+    assert encoder.encoder[0].layers[0].dropout.p == 0.1
+
+    features = [
+        torch.randn(2, 32, 8, 8),
+        torch.randn(2, 32, 4, 4),
+        torch.randn(2, 32, 2, 2),
+    ]
+    encoder.train()
+    first = encoder(features)
+    second = encoder(features)
+    assert any(not torch.equal(left, right) for left, right in zip(first, second))
+    encoder.eval()
+    with torch.inference_mode():
+        first = encoder(features)
+        second = encoder(features)
+    assert all(torch.equal(left, right) for left, right in zip(first, second))
+
+
+@pytest.mark.parametrize(
+    "indices,layers,message",
+    [
+        ([1, 1], 2, "unique"),
+        ([1, 3], 2, "must be in"),
+        ([1, 2], 0, "must be positive"),
+    ],
+)
+def test_multilevel_encoder_rejects_invalid_topology(indices, layers, message):
+    with pytest.raises(ValueError, match=message):
+        HybridEncoderAsymConv(
+            in_channels=[32, 32, 32],
+            feat_strides=[8, 16, 32],
+            hidden_dim=32,
+            nhead=4,
+            dim_feedforward=64,
+            use_encoder_idx=indices,
+            num_encoder_layers=layers,
+            eval_spatial_size=(64, 64),
+        )
+
+
 def _materialized_attention_forward(layer, src, pos_embed):
     residual = src
     if layer.normalize_before:

@@ -33,7 +33,9 @@ from util.training_state import (
     build_training_checkpoint,
     collect_distributed_rng_states,
     initialize_model_from_checkpoint,
+    initialize_backbone_from_checkpoint,
     restore_training_checkpoint,
+    validate_backbone_initialization_checkpoint,
     validate_initialization_checkpoint,
     validate_resume_checkpoint,
 )
@@ -49,6 +51,7 @@ from datasets import (
     DualLineEvaluator,
     SAP_EVALUATION_PROTOCOL,
     build_dataset,
+    resolve_ensemble_training_sources,
 )
 from engine import train_one_epoch, evaluate, test
 from models.lineae.backbones.base import unwrap_state_dict
@@ -74,6 +77,16 @@ def get_args_parser():
 
     # dataset parameters
     parser.add_argument('--coco_path', type=str, default='data/wireframe_processed')
+    parser.add_argument(
+        '--ensemble',
+        action='store_true',
+        help='add every YorkUrban train/val sample to the training dataset',
+    )
+    parser.add_argument(
+        '--ensemble-york-path',
+        default='data/york_processed',
+        help='YorkUrban dataset root used by --ensemble',
+    )
     # training parameters
     # parser.add_argument('--output_dir', default='',
     #                     help='path where to save, empty for no saving')
@@ -87,6 +100,14 @@ def get_args_parser():
         help=(
             'strict-load only full-model weights from a completed LINEAE checkpoint '
             'and start a fresh training run'
+        ),
+    )
+    parser.add_argument(
+        '--init-backbone-checkpoint',
+        default='',
+        help=(
+            'strict-load only backbone.core weights from a completed same-variant '
+            'LINEAE checkpoint and start a fresh training run'
         ),
     )
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
@@ -116,14 +137,27 @@ def get_args_parser():
 
 
 def validate_checkpoint_cli_args(args) -> None:
-    if args.resume and args.init_checkpoint:
-        raise ValueError('--resume and --init-checkpoint are mutually exclusive')
-    if args.eval and args.init_checkpoint:
+    initialization_options = [
+        option
+        for option in (args.init_checkpoint, args.init_backbone_checkpoint)
+        if option
+    ]
+    if len(initialization_options) > 1 or (args.resume and initialization_options):
         raise ValueError(
-            '--init-checkpoint is for fresh training; use --resume with --eval'
+            '--resume, --init-checkpoint, and --init-backbone-checkpoint are '
+            'mutually exclusive'
         )
-    if args.init_checkpoint and int(args.start_epoch) != 0:
-        raise ValueError('--init-checkpoint requires --start_epoch=0')
+    if args.eval and initialization_options:
+        raise ValueError(
+            'checkpoint initialization is for fresh training; use --resume with --eval'
+        )
+    if initialization_options and int(args.start_epoch) != 0:
+        raise ValueError('checkpoint initialization requires --start_epoch=0')
+    if args.eval and args.ensemble:
+        raise ValueError(
+            '--ensemble is training-only; evaluate an ensemble-trained checkpoint '
+            'with --eval --resume without --ensemble'
+        )
 
 
 def create(args, classname):
@@ -150,6 +184,28 @@ def data_loader_options(args, device: torch.device) -> dict:
             raise ValueError('prefetch_factor must be positive when workers are enabled')
         options['prefetch_factor'] = prefetch_factor
     return options
+
+
+def build_training_data_loader(dataset, sampler, args, loader_options):
+    return DataLoader(
+        dataset,
+        args.batch_size_train,
+        sampler=sampler,
+        drop_last=not bool(getattr(args, 'ensemble', False)),
+        collate_fn=BatchImageCollateFunction(
+            base_size=args.eval_spatial_size[0],
+            base_size_repeat=(
+                3 if getattr(args, 'multi_scale_train', True) else None
+            ),
+            minimum_tokens=(
+                args.num_queries
+                if getattr(args, 'multi_scale_train', True)
+                else None
+            ),
+            feature_strides=args.feat_strides,
+        ),
+        **loader_options,
+    )
 
 
 def configure_multiprocessing_sharing(args) -> str | None:
@@ -469,6 +525,7 @@ def main(args):
     )
     validate_validation_render_options(args)
     validate_checkpoint_cli_args(args)
+    resolve_ensemble_training_sources(args)
     sharing_strategy = configure_multiprocessing_sharing(args)
     if sharing_strategy is not None and utils.is_main_process():
         print(f'DataLoader multiprocessing sharing strategy: {sharing_strategy}')
@@ -485,6 +542,7 @@ def main(args):
     )
     resume_checkpoint = None
     initialization_checkpoint = None
+    backbone_initialization_checkpoint = None
     resume_global_step = 0
     best_metric = None
     best_epoch = None
@@ -494,6 +552,8 @@ def main(args):
         raise ValueError(f"selection_mode must be 'max' or 'min', got {selection_mode!r}")
     args.init_checkpoint_sha256 = None
     args.init_checkpoint_load_report = None
+    args.init_backbone_checkpoint_sha256 = None
+    args.init_backbone_checkpoint_load_report = None
     if args.init_checkpoint:
         initialization_path = Path(args.init_checkpoint)
         if not initialization_path.is_file():
@@ -508,6 +568,24 @@ def main(args):
             mmap=True,
         )
         validate_initialization_checkpoint(initialization_checkpoint, args)
+    if args.init_backbone_checkpoint:
+        initialization_path = Path(args.init_backbone_checkpoint)
+        if not initialization_path.is_file():
+            raise FileNotFoundError(
+                'backbone initialization checkpoint does not exist: '
+                f'{initialization_path}'
+            )
+        args.init_backbone_checkpoint_sha256 = sha256_file(initialization_path)
+        backbone_initialization_checkpoint = torch.load(
+            initialization_path,
+            map_location='cpu',
+            weights_only=False,
+            mmap=True,
+        )
+        validate_backbone_initialization_checkpoint(
+            backbone_initialization_checkpoint,
+            args,
+        )
     if args.resume:
         resume_checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
         validate_checkpoint_image_preprocess(resume_checkpoint)
@@ -540,6 +618,15 @@ def main(args):
             args.init_checkpoint_load_report = saved_config.get(
                 'init_checkpoint_load_report'
             )
+            args.init_backbone_checkpoint = saved_config.get(
+                'init_backbone_checkpoint', ''
+            )
+            args.init_backbone_checkpoint_sha256 = saved_config.get(
+                'init_backbone_checkpoint_sha256'
+            )
+            args.init_backbone_checkpoint_load_report = saved_config.get(
+                'init_backbone_checkpoint_load_report'
+            )
 
     # setup tensorboard writer
     writer = None
@@ -550,7 +637,11 @@ def main(args):
         os.makedirs(args.output_dir, exist_ok=True)
         writer = SummaryWriter(**writer_kwargs)
 
-    if initialization_checkpoint is not None or (args.eval and args.resume):
+    if (
+        initialization_checkpoint is not None
+        or backbone_initialization_checkpoint is not None
+        or args.resume
+    ):
         args.pretrained = False
 
     # setup eval_spatial_size
@@ -612,6 +703,23 @@ def main(args):
                 f'{initialization_report["new_state_keys"]}'
             )
         del initialization_checkpoint
+    if backbone_initialization_checkpoint is not None:
+        initialization_report = initialize_backbone_from_checkpoint(
+            backbone_initialization_checkpoint,
+            model=model,
+            args=args,
+        )
+        args.init_backbone_checkpoint_load_report = initialization_report
+        print(
+            'Initialized fresh DINO core weights: '
+            f'path={args.init_backbone_checkpoint}, '
+            f'sha256={args.init_backbone_checkpoint_sha256}, '
+            f'source_epoch={initialization_report["source_epoch"]}, '
+            f'inference_model={initialization_report["inference_model"]}, '
+            f'loaded={initialization_report["loaded_tensor_count"]}, '
+            f'ignored={initialization_report["ignored_source_tensor_count"]}'
+        )
+        del backbone_initialization_checkpoint
     teacher_model, distillation_criterion = build_frozen_teacher(
         args,
         device,
@@ -686,21 +794,12 @@ def main(args):
             sampler_train = torch.utils.data.RandomSampler(dataset_train)
             sampler_val = None if dataset_val is None else torch.utils.data.SequentialSampler(dataset_val)
         
-        data_loader_train = DataLoader(dataset_train, 
-                                        args.batch_size_train, 
-                                        sampler=sampler_train, 
-                                        drop_last=True,
-                                        collate_fn=BatchImageCollateFunction(
-                                            base_size=args.eval_spatial_size[0],
-                                            base_size_repeat=3 if getattr(args, 'multi_scale_train', True) else None,
-                                            minimum_tokens=(
-                                                args.num_queries
-                                                if getattr(args, 'multi_scale_train', True)
-                                                else None
-                                            ),
-                                            feature_strides=args.feat_strides,
-                                        ),
-                                        **loader_options)
+        data_loader_train = build_training_data_loader(
+            dataset_train,
+            sampler_train,
+            args,
+            loader_options,
+        )
         data_loader_val = None
         if dataset_val is not None:
             data_loader_val = DataLoader(dataset_val,
@@ -741,12 +840,18 @@ def main(args):
                 and not getattr(args, 'progressive_unfreeze', False)
                 and int(getattr(args, 'backbone_trainable_layers', 0)) == 0
             ):
-                print(
-                    'WARNING: the entire DINOv3 core is trainable from epoch 0. '
-                    'This is a diagnostic recipe and may destabilize pretrained '
-                    'features; the committed teacher recipe uses progressive '
-                    'unfreezing.'
-                )
+                if getattr(args, 'accuracy_head_schema', None):
+                    print(
+                        'Accuracy-tier recipe: the entire DINOv3 core is '
+                        'trainable from epoch 0.'
+                    )
+                else:
+                    print(
+                        'WARNING: the entire DINOv3 core is trainable from epoch 0. '
+                        'This is a diagnostic recipe and may destabilize pretrained '
+                        'features; the committed teacher recipe uses progressive '
+                        'unfreezing.'
+                    )
     else:
         args.optimizer_steps_per_epoch = 1
     args.distill_temperature_steps_resolved = None

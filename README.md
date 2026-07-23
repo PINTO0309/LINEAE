@@ -36,8 +36,8 @@ The following exact counts are produced from each committed default config with 
 | L       |         23.0 |                6.7 |      29.7 |   94.5 |||||||
 | X       |         30.1 |                8.1 |      38.2 |  121.2 |||||||
 | XL      |         88.4 |                8.1 |      96.5 |  306.3 |||||||
-| 2XL     |        306.8 |                8.1 |     314.9 | 1005.6 |||||||
-| 3XL     |        845.2 |                8.1 |     853.3 | 2731.4 |73.7|78.2|80.0|31.1|34.7|36.5|
+| 2XL     |        311.5 |               60.7 |     372.2 | 1173.6 |||||||
+| 3XL     |        853.7 |              106.8 |     960.5 | 3043.2 |||||||
 
 `M` is decimal millions (`1 M = 1,000,000` parameters). GFLOPs are the batch-1 forward-operation count reported by the locked `calflops` implementation after `model.deploy()` at each variant's canonical input size: 320 for A, 416 for F, and 640 for P through 3XL. One multiply-accumulate contributes two FLOPs, with other counted operations added separately. Values are rounded to one decimal place; GFLOPs describe graph complexity rather than measured hardware throughput, and the parameter regression test retains the exact integer counts. The 2XL/3XL graph is reconstructed and executed on meta tensors for this accounting, avoiding parameter duplication and real multi-teraflop CPU computation while retaining the same module hooks and shapes.
 
@@ -62,7 +62,7 @@ T uses HGNetV2-B1's native stage 4 with the original [LINEA-S detector dimension
 
 The defaults are capacity-aware starting estimates, not empirically established optima. Wireframe train contains 5,000 images, so the committed single-GPU batch-8 profile performs 625 optimizer steps per epoch. Every full recipe applies cosine LR decay to `1e-7` over its complete optimizer-step horizon and selects `checkpoint_best.pth` by validation sAP10.
 
-The estimates combine three reference anchors. The original N recipe supplies N's 72 epochs. There are no A/F/P measurements, so their no-KD values remain conservative 72/66/60 starting points. T uses 60 epochs as the midpoint between N and S; this remains an unvalidated estimate. The DINO values follow the 45/45/40/35 trend for S/M/L/X. XL uses 36 epochs as its sufficient default. The accuracy-tier 2XL and 3XL defaults are both 50 epochs, which is considered sufficient for their non-distillation training; at effective batch 8 this gives each model 31,250 optimizer updates. Their progressive-unfreeze schedules are fitted inside that budget: 2XL keeps the slower two-epoch interval and reaches full depth at epoch 43, while 3XL uses a one-epoch interval and reaches full depth at epoch 30. Direct-XL KD now inherits the corresponding no-KD epoch count so its optimizer-step and cosine-LR horizon are directly comparable; the former shorter 60/55/50/50/45/40/40/30/30 ladder was removed after N/S runs showed an early KD regression followed by premature LR decay.
+The estimates combine three reference anchors. The original N recipe supplies N's 72 epochs. There are no A/F/P measurements, so their no-KD values remain conservative 72/66/60 starting points. T uses 60 epochs as the midpoint between N and S; this remains an unvalidated estimate. The DINO values follow the 45/45/40/35 trend for S/M/L/X. XL uses 36 epochs as its sufficient default. The accuracy-tier 2XL and 3XL defaults are both 50 epochs, which is considered sufficient for their non-distillation training; at effective batch 8 this gives each model 31,250 optimizer updates. Their accuracy-first standard configs train the entire DINO core from epoch 0 instead of spending part of that budget on progressive unfreezing. Direct-XL KD now inherits the corresponding no-KD epoch count so its optimizer-step and cosine-LR horizon are directly comparable; the former shorter 60/55/50/50/45/40/40/30/30 ladder was removed after N/S runs showed an early KD regression followed by premature LR decay.
 
 | Variant | No-distillation config | Epochs | Steps | Direct-XL distillation config | Epochs | Steps |
 | --- | --- | --: | --: | --- | --: | --: |
@@ -93,8 +93,8 @@ LAB (`LearnableAffineBlock`) applies a learned scalar scale and bias after an ac
 | N | enabled | 30 | 60 | all HGNet stages trainable from epoch 0 |
 | T | enabled | 30 | 60 | all HGNet stages trainable from epoch 0 |
 | S / M / L / X / XL | not applicable | 0 | 0 | progressive 12-block DINO schedule |
-| 2XL | not applicable | 0 | 0 | progressive 24-block DINO schedule |
-| 3XL | not applicable | 0 | 0 | progressive 32-block DINO schedule |
+| 2XL | not applicable | 0 | 0 | all 24 DINO blocks trainable from epoch 0 |
+| 3XL | not applicable | 0 | 0 | all 32 DINO blocks trainable from epoch 0 |
 
 Progressive unfreezing is implemented for every DINO recipe and follows the configured GazeLLE-style hold semantics. The last two transformer blocks are trainable during epochs 0--4; epoch 5 adds the next earlier block, one earlier block is then added every two epochs, and all 12 blocks are trainable from epoch 23 through the recipe's final epoch. `initial_freeze_epochs=5` therefore means “hold the initial trainable suffix for five epochs,” not “freeze the entire backbone for five epochs.” The SFP, hybrid encoder, and decoder remain trainable throughout. Optimizer groups include the initially frozen DINO parameters from construction time, so late-unfrozen parameters retain stable optimizer/DDP topology.
 
@@ -116,7 +116,7 @@ Epoch numbers below are zero-based, matching logs and checkpoints. Block indices
 
 For S/M partial stages, the class token is trainable with the selected blocks. For L/X/XL, the class token, storage tokens, and final normalization are also trainable. Patch embedding and all other core parameters remain frozen until epoch 23. SFP, encoder, and decoder parameters are outside this depth count and train from epoch 0.
 
-The larger accuracy variants use the same suffix-unfreezing rule but begin with a proportional trainable suffix. For 2XL, blocks 20–23 are trainable during epochs 0–4, one earlier block is added every two epochs from epoch 5, and all 24 blocks are trainable from epoch 43. For 3XL, blocks 26–31 are trainable during epochs 0–4, one earlier block is added every epoch from epoch 5, and all 32 blocks are trainable from epoch 30. Their class token, storage tokens, and final normalization follow the official-backbone rule; patch embedding and the remaining core parameters become trainable only at full depth. Within the 50-epoch defaults, 2XL has 7 fully unfrozen epochs and 3XL has 20.
+The 2XL/3XL accuracy-tier configs deliberately do not use that schedule. They set `progressive_unfreeze=False`, `backbone_trainable_layers=0`, `initial_freeze_epochs=0`, and `unfreeze_interval=0`, so patch embedding, tokens, every DINO block, final normalization, SFP, encoder, and decoder are trainable throughout all 50 epochs. This is part of their standard recipe, not a diagnostic override.
 
 The final fully unfrozen span differs because each recipe has a different epoch budget:
 
@@ -132,8 +132,8 @@ The final fully unfrozen span differs because each recipe has a different epoch 
 | X no-KD | `configs/lineae/lineae_x.py` | 35 | 23–34 | 12 |
 | X direct-XL KD | `configs/lineae/distill/lineae_x.py` | 35 | 23–34 | 12 |
 | XL no-KD teacher | `configs/lineae/lineae_xl.py` | 36 | 23–35 | 13 |
-| 2XL no-KD teacher candidate | `configs/lineae/lineae_2xl.py` | 50 | 43–49 | 7 |
-| 3XL no-KD teacher candidate | `configs/lineae/lineae_3xl.py` | 50 | 30–49 | 20 |
+| 2XL no-KD teacher candidate | `configs/lineae/lineae_2xl.py` | 50 | 0–49 | 50 |
+| 3XL no-KD teacher candidate | `configs/lineae/lineae_3xl.py` | 50 | 0–49 | 50 |
 
 X-teacher cascade and tuning configs inherit the corresponding direct-XL KD schedule. The XL EMA and photometric ablations inherit the normal XL schedule. `configs/lineae/ablations/lineae_xl_frozen.py` is the explicit exception: it disables progressive unfreezing and keeps the entire DINO core frozen for all 36 epochs.
 
@@ -276,7 +276,29 @@ output_dir="outputs/lineae_${VARIANT}-nokd-init-best-seed43"
 
 This command deliberately takes the new config's normal unfreezing policy. Add the documented full-unfreeze overrides when the new run should instead keep every backbone block trainable from epoch 0. Changing to another variant is rejected; cross-variant transfer remains a distillation task rather than a partial checkpoint load.
 
-Full-training configs target one 80--96 GiB GPU with batch 8, no accumulation, and LINEA-style batch multi-scale training; the dedicated S probe above remains fixed at 640 and batch 1 by design. CUDA training DataLoaders pin image/target tensors and use configurable worker prefetching for non-blocking host-to-device transfer. Worker tensor sharing defaults to PyTorch's `file_system` strategy because a large detection batch contains many variable-length target tensors and the `file_descriptor` strategy can exceed the process open-file limit; `multiprocessing_sharing_strategy` is recorded in the resolved config, run manifest, and resume contract. Multi-scale choices are filtered so P3/P4/P5 always contain at least the variant's configured `num_queries` encoder tokens; the actual weighted scale list is stored in checkpoints and run provenance. Training and KD consume every `num_queries` prediction. PyTorch validation computes official-compatible all-query sAP and deployment top-`num_select` sAP together, while postprocessing, ONNX/TensorRT output, end-to-end Torch timing, and ONNX sAP parity apply the class-0 top `num_select` contract. This keeps published-accuracy comparison separate from the configured 200--500-output deployment tuning axis. CUDA training uses fused AdamW, while CPU diagnostics automatically retain the same AdamW equations without requesting the CUDA kernel. DINO activation checkpointing skips redundant RNG snapshots because every checkpointed block is deterministic; RoPE coordinate randomness is generated outside those blocks. A successful full run additionally writes a hash-bound `run_complete.json`, allowing orchestration to distinguish a finished run from an interrupted checkpoint.
+### Fresh accuracy head from a trained DINO core
+
+`--init-backbone-checkpoint` is the narrow migration path from an older same-variant LINEAE checkpoint to a model whose SFP or detector head has changed. It requires checkpoint format 2, a completed epoch, the current OpenCV preprocessing schema, the same variant, and the same DINO core architecture. The loader takes the checkpoint's selected inference state (`model` or `ema_model`) and requires every `backbone.core.*` key, shape, and dtype to match exactly. It intentionally ignores the old SFP, hybrid encoder, decoder, and training-only tensors; those modules receive the new config's normal fresh initialization.
+
+This is a new epoch-0 run. Optimizer moments, schedulers, GradScaler, epoch/global step, best score, EMA counters, and RNG state are not restored. `--init-backbone-checkpoint` is mutually exclusive with `--resume`, `--init-checkpoint`, and standalone `--eval`. The source SHA-256, completed epoch, selected inference state, loaded tensor count, and ignored tensor count are recorded in `resolved_config.json`, `run_manifest.json`, and every checkpoint made by the new run. Subsequent `--resume` restores the new checkpoint completely and does not reopen the migration source.
+
+For example, this transfers only the trained ViT-L/16 core from an old 2XL best checkpoint into the new wide-head 2XL model:
+
+```bash
+MODEL=2xl
+uv run --locked python main.py \
+-c "configs/lineae/lineae_${MODEL}.py" \
+--init-backbone-checkpoint \
+"outputs/lineae_${MODEL}-nokd-full-unfreeze-seed42/checkpoint_best.pth" \
+--coco_path data/wireframe_processed \
+--device cuda \
+--amp \
+--num_workers 8 \
+--seed 42 \
+--options output_dir="outputs/lineae_${MODEL}-wide-core-init-seed42"
+```
+
+A–XL full-training configs target one 80--96 GiB GPU with physical batch 8 and no accumulation; 2XL/3XL instead use smaller physical batches plus accumulation to preserve the same effective batch 8. All use LINEA-style batch multi-scale training, while the dedicated S probe above remains fixed at 640 and batch 1 by design. CUDA training DataLoaders pin image/target tensors and use configurable worker prefetching for non-blocking host-to-device transfer. Worker tensor sharing defaults to PyTorch's `file_system` strategy because a large detection batch contains many variable-length target tensors and the `file_descriptor` strategy can exceed the process open-file limit; `multiprocessing_sharing_strategy` is recorded in the resolved config, run manifest, and resume contract. Multi-scale choices are filtered so P3/P4/P5 always contain at least the variant's configured `num_queries` encoder tokens; the actual weighted scale list is stored in checkpoints and run provenance. Training and KD consume every `num_queries` prediction. PyTorch validation computes official-compatible all-query sAP and deployment top-`num_select` sAP together, while postprocessing, ONNX/TensorRT output, end-to-end Torch timing, and ONNX sAP parity apply the class-0 top `num_select` contract. This keeps published-accuracy comparison separate from the configured 200--500-output deployment tuning axis. CUDA training uses fused AdamW, while CPU diagnostics automatically retain the same AdamW equations without requesting the CUDA kernel. DINO activation checkpointing skips redundant RNG snapshots because every checkpointed block is deterministic; RoPE coordinate randomness is generated outside those blocks. A successful full run additionally writes a hash-bound `run_complete.json`, allowing orchestration to distinguish a finished run from an interrupted checkpoint.
 
 All compact and official DINO variants cache the most recent deterministic RoPE sin/cos tensors during evaluation. The cache is keyed by resolution, device, dtype, normalization mode, and the periods-buffer version, and is bypassed for training, tracing, and ONNX export. This accelerates both fixed-shape deployment and repeated online-teacher inference without changing stochastic training or exported graphs. RoPE sin/cos remain at their natural half-head width and are applied directly to the two value halves, rather than duplicating them before every block. This halves their generated and cached tensor footprint while remaining bit-identical to the legacy full-width equation on CPU and CUDA. Full-width inputs remain supported. During Torch `no_grad` inference, compact and official DINO attention also writes those same rotated patch values back into the fresh Q/K projection storage. This removes the per-block rotated-patch and prefix-concatenation tensors; training, tracing, and ONNX export retain the ordinary functional expression.
 
@@ -469,9 +491,27 @@ This performs strict reload and identical-output checks before writing `ckpts/li
 
 ## 2XL / 3XL accuracy workflow
 
-2XL and 3XL are supervised accuracy-tier teacher candidates and do not replace the qualified XL used by existing distillation configs. Both retain XL's 256-channel SFP/head, six decoder layers, 1,100 queries, top-300 deployment selection, canonical 640 input, and 480–800 batch multi-scale range. EMA, intermediate-block fusion, and feature KD remain disabled so the first comparison isolates backbone capacity. On one 96 GB GPU, 2XL uses batch 4 with two-step accumulation and 3XL uses batch 2 with four-step accumulation; both therefore retain effective batch 8, 625 optimizer updates per epoch, and a 50-epoch/31,250-update default horizon.
+2XL and 3XL are supervised accuracy-tier teacher candidates and do not replace the qualified XL used by existing distillation configs. Both keep 1,100 queries, 300 DN queries, top-300 deployment selection, Official sAP10 best-checkpoint selection, canonical 640 input, the 480–800 batch multi-scale range, and the existing supervised loss composition. Their standard heads are intentionally much larger than XL:
 
-Run the bounded optimizer smoke before committing to either full schedule. Set `MODEL` to `2xl` or `3xl`; this loads the real bootstrap checkpoint and completes exactly one optimizer update without evaluation, FLOP profiling, or numbered periodic snapshots. It still writes the atomic latest-state `checkpoint.pth` for diagnosis:
+| Setting | 2XL | 3XL |
+| --- | ---: | ---: |
+| DINO blocks fused | 5 / 11 / 17 / 23 | 7 / 15 / 23 / 31 |
+| SFP / hidden width | 512 | 640 |
+| Attention heads | 16 | 20 |
+| Transformer FFN width | 2,048 | 2,560 |
+| P4/P5 encoder layers | 2 independent layers each | 2 independent layers each |
+| Decoder layers / `eval_idx` | 8 / 7 | 10 / 9 |
+| Decoder sampling points | `[8, 4, 2]` | `[8, 4, 2]` |
+| Regression bins / dropout | 32 / 0.1 | 32 / 0.1 |
+| FPN/PAN expansion / depth | 0.5 / 1.0 | 0.5 / 1.0 |
+
+P3 bypasses global Transformer attention; separate two-layer encoders operate only on P4 and P5 before the enlarged FPN/PAN. Intermediate DINO fusion uses the final block as the reference and adds the mean of three gated intermediate-minus-final residuals through a Dirac-initialized 1×1 projection. The `tanh` gates start at zero, so the initialized fused map is bit-exactly the final-block map while the gates can learn useful earlier-block corrections. EMA and feature KD remain disabled by default.
+
+On one 96 GB GPU, 2XL uses physical batch 4 with two-step accumulation and 3XL uses physical batch 2 with four-step accumulation. Both retain effective batch 8, 625 optimizer updates per epoch, and a 50-epoch/31,250-update horizon. The entire DINO core is trainable from epoch 0, activation checkpointing is enabled, the backbone LR remains `1e-5`, the head LR remains `2e-4`, cosine decay is used, and warm-up is disabled. After measuring sufficient VRAM headroom, `--options use_checkpoint=False` may be used to trade memory for speed without changing model semantics.
+
+The new deployed counts at 640×640 are 311.5M backbone + 60.7M after-backbone = 372.2M and 1,173.6 GFLOPs for 2XL, and 853.7M + 106.8M = 960.5M and 3,043.2 GFLOPs for 3XL. These are the exact meta-graph values behind the parameter inventory. Full-model checkpoints from the former 256-channel/six-decoder architecture are incompatible with the new standard config for resume, formal evaluation, and `--init-checkpoint`. Only their same-variant DINO core may be migrated through `--init-backbone-checkpoint` as documented above.
+
+Run the bounded optimizer smoke on the 96 GB host before committing to either full schedule. Set `MODEL` to `2xl` or `3xl`; this loads the official DINO bootstrap checkpoint and completes exactly one optimizer update without evaluation, FLOP profiling, or numbered periodic snapshots. It still writes the atomic latest-state `checkpoint.pth` for diagnosis:
 
 ```bash
 MODEL=2xl
@@ -489,7 +529,7 @@ uv run --locked python main.py \
 --options output_dir="outputs/smoke_lineae_${MODEL}-seed42"
 ```
 
-The recommended full single-GPU commands use the committed batch, accumulation, epoch, LR, activation-checkpointing, and progressive-unfreeze settings:
+The standard single-GPU commands use the committed batch, accumulation, epoch, LR, activation-checkpointing, and full-unfreeze settings. These start from the official DINO bootstrap weights; add the core-migration option shown above when a compatible old same-variant best checkpoint is available:
 
 ```bash
 uv run --locked python main.py \
@@ -525,7 +565,7 @@ uv run --locked python main.py \
 --options output_dir=outputs/lineae_2xl-seed42
 ```
 
-Peak VRAM must be checked again after full unfreezing because backbone gradients and AdamW state grow as earlier blocks become trainable. Do not raise the effective batch above eight when tuning physical batch and accumulation. The 3XL state exceeds the practical single-file ONNX protobuf limit; external-data ONNX support is outside this accuracy-training workflow, whose completion artifacts are PyTorch checkpoints and evaluation reports.
+Because the complete core is trainable immediately, the first optimizer step is representative of backbone gradient and AdamW-state allocation; validate that smoke step before a full run. Do not raise the effective batch above eight when tuning physical batch and accumulation. The 3XL state exceeds the practical single-file ONNX protobuf limit; external-data ONNX support is outside this accuracy-training workflow, whose completion artifacts are PyTorch checkpoints and evaluation reports.
 
 ## Distillation
 

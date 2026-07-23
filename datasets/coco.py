@@ -5,8 +5,10 @@ COCO dataset which returns image_id for evaluation.
 Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references/detection/coco_utils.py
 """
 
+import hashlib
 import json
 from pathlib import Path
+
 import numpy as np
 
 import torch
@@ -21,7 +23,99 @@ from util.image_preprocess import (
 )
 
 
-__all__ = ['build']
+__all__ = ['build', 'resolve_ensemble_training_sources']
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _inspect_ensemble_source(root: Path, split: str) -> dict:
+    image_dir = root / f'{split}2017'
+    annotation_file = root / 'annotations' / f'lines_{split}2017.json'
+    if not image_dir.is_dir():
+        raise FileNotFoundError(
+            f'ensemble YorkUrban image directory does not exist: {image_dir}'
+        )
+    if not annotation_file.is_file():
+        raise FileNotFoundError(
+            f'ensemble YorkUrban annotation does not exist: {annotation_file}'
+        )
+    try:
+        with annotation_file.open('r', encoding='utf-8') as stream:
+            annotation = json.load(stream)
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(
+            f'could not read ensemble YorkUrban annotation {annotation_file}: {error}'
+        ) from error
+    images = annotation.get('images') if isinstance(annotation, dict) else None
+    if not isinstance(images, list):
+        raise ValueError(
+            f'ensemble YorkUrban annotation must contain an images list: '
+            f'{annotation_file}'
+        )
+    missing_images = []
+    for record in images:
+        if not isinstance(record, dict) or not isinstance(record.get('file_name'), str):
+            raise ValueError(
+                f'ensemble YorkUrban annotation has an invalid image record: '
+                f'{annotation_file}'
+            )
+        image_path = image_dir / record['file_name']
+        if not image_path.is_file():
+            missing_images.append(str(image_path))
+    if missing_images:
+        raise FileNotFoundError(
+            'ensemble YorkUrban annotation references missing images: '
+            f'{missing_images[:5]}'
+        )
+    return {
+        'name': f'york_{split}',
+        'split': split,
+        'root': str(root),
+        'image_dir': str(image_dir),
+        'annotation_file': str(annotation_file),
+        'annotation_sha256': _sha256_file(annotation_file),
+        'samples': len(images),
+    }
+
+
+def resolve_ensemble_training_sources(args) -> list[dict]:
+    """Preflight and record every YorkUrban split added to training."""
+    if not getattr(args, 'ensemble', False):
+        args.ensemble_annotation_sha256 = None
+        args.ensemble_split_samples = None
+        args.ensemble_training_sample_count = 0
+        args.ensemble_training_sources = []
+        return []
+    if getattr(args, 'use_lmap', False):
+        raise ValueError('--ensemble cannot be combined with use_lmap=True')
+    root = Path(
+        getattr(args, 'ensemble_york_path', 'data/york_processed')
+    ).resolve()
+    args.ensemble_york_path = str(root)
+    sources = [
+        _inspect_ensemble_source(root, 'train'),
+        _inspect_ensemble_source(root, 'val'),
+    ]
+    total = sum(source['samples'] for source in sources)
+    if total == 0:
+        raise ValueError(
+            f'ensemble YorkUrban dataset contains no images in train or val: {root}'
+        )
+    args.ensemble_annotation_sha256 = {
+        source['split']: source['annotation_sha256'] for source in sources
+    }
+    args.ensemble_split_samples = {
+        source['split']: source['samples'] for source in sources
+    }
+    args.ensemble_training_sample_count = total
+    args.ensemble_training_sources = sources
+    return sources
 
 
 class CocoDetection(torch.utils.data.Dataset):
@@ -205,6 +299,43 @@ def build(image_set, args):
     dataset = CocoDetection(img_folder, ann_file, 
             transforms=make_coco_transforms(image_set, args=args),
             include_lmap=use_lmap
+        )
+
+    if image_set == 'train' and getattr(args, 'ensemble', False):
+        sources = getattr(args, 'ensemble_training_sources', None)
+        if not sources:
+            sources = resolve_ensemble_training_sources(args)
+        datasets = [dataset]
+        for source in sources:
+            if source['samples'] == 0:
+                continue
+            datasets.append(
+                CocoDetection(
+                    source['image_dir'],
+                    source['annotation_file'],
+                    transforms=make_coco_transforms('train', args=args),
+                    include_lmap=False,
+                )
+            )
+        dataset = torch.utils.data.ConcatDataset(datasets)
+        args.training_dataset_sources = [
+            {
+                'name': 'primary_train',
+                'split': 'train',
+                'root': str(root),
+                'image_dir': str(img_folder),
+                'annotation_file': str(ann_file),
+                'samples': len(datasets[0]),
+            },
+            *sources,
+        ]
+        args.training_dataset_sample_count = len(dataset)
+        print(
+            'ensemble training dataset: '
+            f'primary={len(datasets[0])}, '
+            f'york_train={args.ensemble_split_samples["train"]}, '
+            f'york_val={args.ensemble_split_samples["val"]}, '
+            f'total={len(dataset)}'
         )
 
     return dataset

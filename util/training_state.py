@@ -54,8 +54,12 @@ RESUME_CRITICAL_FIELDS = (
     "initial_freeze_epochs",
     "unfreeze_interval",
     "dino_intermediate_layers",
+    "dino_intermediate_fusion_schema",
+    "accuracy_head_schema",
     "num_classes",
     "hybrid_encoder",
+    "encoder_use_indices",
+    "encoder_num_layers",
     "hidden_dim",
     "in_channels_encoder",
     "feat_channels_decoder",
@@ -94,6 +98,11 @@ RESUME_CRITICAL_FIELDS = (
     "endpoint_loss_schema",
     "weight_dict",
     "coco_path",
+    "ensemble",
+    "ensemble_york_path",
+    "ensemble_annotation_sha256",
+    "ensemble_split_samples",
+    "training_dataset_sample_count",
     "data_aug_scales",
     "data_aug_max_size",
     "data_aug_scales2_resize",
@@ -177,8 +186,12 @@ INITIALIZATION_CRITICAL_FIELDS = (
     "use_lab",
     "batch_norm_type",
     "dino_intermediate_layers",
+    "dino_intermediate_fusion_schema",
+    "accuracy_head_schema",
     "num_classes",
     "hybrid_encoder",
+    "encoder_use_indices",
+    "encoder_num_layers",
     "hidden_dim",
     "in_channels_encoder",
     "feat_channels_decoder",
@@ -205,6 +218,21 @@ INITIALIZATION_CRITICAL_FIELDS = (
     "image_mean",
     "image_std",
     "eval_spatial_size",
+)
+
+
+INITIALIZATION_OPTIONAL_DEFAULTS = {
+    "dino_intermediate_fusion_schema": "weighted_v1",
+    "encoder_use_indices": [2],
+    "encoder_num_layers": 1,
+}
+
+
+BACKBONE_INITIALIZATION_CRITICAL_FIELDS = (
+    "modelname",
+    "variant",
+    "backbone",
+    "image_preprocess_schema",
 )
 
 
@@ -388,6 +416,8 @@ def validate_resume_checkpoint(checkpoint: Mapping[str, Any], args: Any) -> None
             "endpoint_loss_schema": "non-degenerate endpoint-loss tie handling",
             "synthetic_p5_schema": "efficient synthetic-P5 architecture",
             "image_preprocess_schema": "OpenCV image preprocessing",
+            "accuracy_head_schema": "wide multilevel accuracy-head architecture",
+            "ensemble": "Wireframe plus YorkUrban training-dataset",
         }
         for field, description in required_semantic_markers.items():
             if getattr(args, field, None) and field not in saved_config:
@@ -448,10 +478,13 @@ def validate_initialization_checkpoint(
         if not hasattr(args, field):
             continue
         if field not in saved_config:
-            raise ValueError(
-                f"initialization checkpoint is missing model semantic field {field!r}"
-            )
-        saved = _canonical_config_value(saved_config[field])
+            if field not in INITIALIZATION_OPTIONAL_DEFAULTS:
+                raise ValueError(
+                    f"initialization checkpoint is missing model semantic field {field!r}"
+                )
+            saved = _canonical_config_value(INITIALIZATION_OPTIONAL_DEFAULTS[field])
+        else:
+            saved = _canonical_config_value(saved_config[field])
         current = _canonical_config_value(getattr(args, field))
         if saved != current:
             raise ValueError(
@@ -459,6 +492,123 @@ def validate_initialization_checkpoint(
                 f"checkpoint={saved!r}, current={current!r}"
             )
     return unwrap_state_dict(checkpoint)
+
+
+def validate_backbone_initialization_checkpoint(
+    checkpoint: Mapping[str, Any], args: Any
+) -> Mapping[str, torch.Tensor]:
+    """Validate a completed same-variant checkpoint for DINO-core transfer."""
+    if not isinstance(checkpoint, Mapping):
+        raise TypeError("backbone initialization checkpoint must be a mapping")
+    required = {
+        "format_version",
+        "model",
+        "epoch",
+        "epoch_complete",
+        "config",
+        "inference_model",
+    }
+    missing = sorted(required - checkpoint.keys())
+    if missing:
+        raise ValueError(
+            "backbone initialization checkpoint is missing required fields: "
+            f"{missing}"
+        )
+    if checkpoint["epoch_complete"] is not True:
+        raise ValueError(
+            "backbone initialization checkpoint must represent a completed epoch"
+        )
+    version = checkpoint.get("format_version", 0)
+    if version != CHECKPOINT_FORMAT_VERSION:
+        raise ValueError(
+            "unsupported backbone initialization checkpoint format version "
+            f"{version}; expected {CHECKPOINT_FORMAT_VERSION}"
+        )
+    validate_checkpoint_image_preprocess(checkpoint)
+    saved_config = checkpoint["config"]
+    if not isinstance(saved_config, Mapping):
+        raise TypeError("backbone initialization checkpoint config must be a mapping")
+    if not str(getattr(args, "backbone", "")).startswith("dinov3"):
+        raise ValueError("--init-backbone-checkpoint requires a DINOv3 backbone")
+    for field in BACKBONE_INITIALIZATION_CRITICAL_FIELDS:
+        if field not in saved_config:
+            raise ValueError(
+                "backbone initialization checkpoint is missing semantic field "
+                f"{field!r}"
+            )
+        saved = _canonical_config_value(saved_config[field])
+        current = _canonical_config_value(getattr(args, field, None))
+        if saved != current:
+            raise ValueError(
+                f"backbone initialization config mismatch for {field}: "
+                f"checkpoint={saved!r}, current={current!r}"
+            )
+    source_state = unwrap_state_dict(checkpoint)
+    prefix = "backbone.core."
+    source_core = {
+        key[len(prefix):]: value
+        for key, value in source_state.items()
+        if key.startswith(prefix)
+    }
+    if not source_core:
+        raise ValueError(
+            "backbone initialization checkpoint contains no backbone.core tensors"
+        )
+    return source_core
+
+
+def initialize_backbone_from_checkpoint(
+    checkpoint: Mapping[str, Any],
+    *,
+    model: torch.nn.Module,
+    args: Any,
+) -> dict[str, Any]:
+    """Strict-load only a selected checkpoint's DINO core into a fresh model."""
+    source_core = validate_backbone_initialization_checkpoint(checkpoint, args)
+    target_core = model.backbone.core.state_dict()
+    source_keys = set(source_core)
+    target_keys = set(target_core)
+    missing = sorted(target_keys - source_keys)
+    unexpected = sorted(source_keys - target_keys)
+    incompatible = sorted(
+        key
+        for key in source_keys & target_keys
+        if (
+            source_core[key].shape != target_core[key].shape
+            or source_core[key].dtype != target_core[key].dtype
+        )
+    )
+    if missing or unexpected or incompatible:
+        details = []
+        if missing:
+            details.append(f"missing={missing[:5]}")
+        if unexpected:
+            details.append(f"unexpected={unexpected[:5]}")
+        if incompatible:
+            key = incompatible[0]
+            details.append(
+                "shape_or_dtype="
+                f"{key}: checkpoint={tuple(source_core[key].shape)}/"
+                f"{source_core[key].dtype}, model={tuple(target_core[key].shape)}/"
+                f"{target_core[key].dtype}"
+            )
+        raise ValueError(
+            "backbone initialization core state mismatch: " + "; ".join(details)
+        )
+    model.backbone.core.load_state_dict(source_core, strict=True)
+    selected_state = unwrap_state_dict(checkpoint)
+    ignored = sorted(
+        key for key in selected_state if not key.startswith("backbone.core.")
+    )
+    return {
+        "source_epoch": int(checkpoint["epoch"]),
+        "inference_model": checkpoint["inference_model"],
+        "source_tensor_count": len(selected_state),
+        "loaded_tensor_count": len(source_core),
+        "ignored_source_tensor_count": len(ignored),
+        "ignored_source_keys": ignored,
+        "strict_core_state": True,
+    }
 
 
 def initialize_model_from_checkpoint(

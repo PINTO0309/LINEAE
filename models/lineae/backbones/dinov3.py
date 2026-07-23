@@ -313,6 +313,47 @@ class DinoIntermediateFusion(nn.Module):
         return self.projection(fused)
 
 
+class DinoFinalResidualFusion(nn.Module):
+    """Fuse intermediate maps without perturbing the final map at initialization."""
+
+    def __init__(self, channels: int, levels: int) -> None:
+        super().__init__()
+        if levels < 2:
+            raise ValueError("intermediate fusion requires at least two block outputs")
+        self.residual_gates = nn.Parameter(torch.zeros(levels - 1))
+        self.projection = nn.Conv2d(channels, channels, kernel_size=1)
+        nn.init.dirac_(self.projection.weight)
+        nn.init.zeros_(self.projection.bias)
+
+    def forward(self, features: list[Tensor]) -> Tensor:
+        if len(features) != self.residual_gates.numel() + 1:
+            raise ValueError("intermediate feature count does not match fusion adapter")
+        final = features[-1]
+        if any(feature.shape != final.shape for feature in features[:-1]):
+            raise ValueError("all intermediate DINO features must have identical shapes")
+        residual = sum(
+            gate.tanh() * (feature - final)
+            for gate, feature in zip(
+                self.residual_gates,
+                features[:-1],
+                strict=True,
+            )
+        ) / self.residual_gates.numel()
+        return final + self.projection(residual)
+
+
+def _build_intermediate_fusion(
+    schema: str,
+    channels: int,
+    levels: int,
+) -> nn.Module:
+    if schema == "weighted_v1":
+        return DinoIntermediateFusion(channels, levels)
+    if schema == "residual_final_v1":
+        return DinoFinalResidualFusion(channels, levels)
+    raise ValueError(f"unsupported DINO intermediate fusion schema: {schema!r}")
+
+
 class CompactDinoV3(nn.Module):
     """The exact checkpoint-owned Tiny/Tiny+ module (148 tensor keys)."""
 
@@ -604,6 +645,7 @@ class CompactDinoV3Backbone(LINEAEBackbone):
         trainable_depth: int = 2,
         use_checkpoint: bool = False,
         intermediate_layers=(),
+        intermediate_fusion_schema: str = "weighted_v1",
     ) -> None:
         super().__init__()
         self.core = CompactDinoV3(
@@ -629,7 +671,11 @@ class CompactDinoV3Backbone(LINEAEBackbone):
             intermediate_layers, len(self.core.blocks)
         )
         self.intermediate_fusion = (
-            DinoIntermediateFusion(embed_dim, len(self.intermediate_layers))
+            _build_intermediate_fusion(
+                intermediate_fusion_schema,
+                embed_dim,
+                len(self.intermediate_layers),
+            )
             if self.intermediate_layers else None
         )
         self.pyramid = SimpleFeaturePyramid(embed_dim, channels)
@@ -683,6 +729,7 @@ class OfficialDinoV3Backbone(LINEAEBackbone):
         trainable_depth: int = 2,
         use_checkpoint: bool = False,
         intermediate_layers=(),
+        intermediate_fusion_schema: str = "weighted_v1",
     ) -> None:
         super().__init__()
         self.core = OfficialDinoV3(
@@ -710,7 +757,11 @@ class OfficialDinoV3Backbone(LINEAEBackbone):
             intermediate_layers, len(self.core.blocks)
         )
         self.intermediate_fusion = (
-            DinoIntermediateFusion(embed_dim, len(self.intermediate_layers))
+            _build_intermediate_fusion(
+                intermediate_fusion_schema,
+                embed_dim,
+                len(self.intermediate_layers),
+            )
             if self.intermediate_layers else None
         )
         self.pyramid = SimpleFeaturePyramid(embed_dim, channels)

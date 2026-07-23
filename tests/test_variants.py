@@ -26,8 +26,8 @@ DEPLOY_PARAMETER_COUNTS = {
     "L": (22_979_200, 6_677_228, 29_656_428),
     "X": (30_075_520, 8_083_770, 38_159_290),
     "XL": (88_423_936, 8_083_770, 96_507_706),
-    "2XL": (306_825_984, 8_083_770, 314_909_754),
-    "3XL": (845_222_912, 8_083_770, 853_306_682),
+    "2XL": (311_547_395, 60_683_840, 372_231_235),
+    "3XL": (853_746_563, 106_789_678, 960_536_241),
 }
 
 DEPLOY_GFLOPS = {
@@ -41,8 +41,8 @@ DEPLOY_GFLOPS = {
     "L": 94.5,
     "X": 121.2,
     "XL": 306.3,
-    "2XL": 1005.6,
-    "3XL": 2731.4,
+    "2XL": 1173.6,
+    "3XL": 3043.2,
 }
 
 LARGE_VARIANTS = ("2XL", "3XL")
@@ -141,14 +141,14 @@ def test_readme_deploy_parameter_and_lab_inventory_matches_models(variant):
         f"{total / 1_000_000:.1f}",
         f"{DEPLOY_GFLOPS[variant]:.1f}",
     )
-    assert expected_row in _readme_table_rows()
+    assert any(row[:5] == expected_row for row in _readme_table_rows())
 
 
 @pytest.mark.parametrize(
     "variant,expected_flops,expected_macs",
     [
-        ("2XL", "1.0056 TFLOPS", "502.431 GMACs"),
-        ("3XL", "2.7314 TFLOPS", "1.3652 TMACs"),
+        ("2XL", "1.1736 TFLOPS", "586.262 GMACs"),
+        ("3XL", "3.0432 TFLOPS", "1.5208 TMACs"),
     ],
 )
 def test_large_variant_complexity_uses_meta_graph(
@@ -394,16 +394,24 @@ def test_full_lineae_recipes_restore_linea_multiscale_training(variant):
 
 
 @pytest.mark.parametrize(
-    "variant,batch_size,accumulation,epochs,initial_depth,unfreeze_interval",
-    [("2XL", 4, 2, 50, 4, 2), ("3XL", 2, 4, 50, 6, 1)],
+    (
+        "variant,batch_size,accumulation,hidden_dim,nheads,feedforward,"
+        "decoder_layers,intermediate_layers"
+    ),
+    [
+        ("2XL", 4, 2, 512, 16, 2048, 8, [5, 11, 17, 23]),
+        ("3XL", 2, 4, 640, 20, 2560, 10, [7, 15, 23, 31]),
+    ],
 )
-def test_accuracy_tier_large_recipes_keep_effective_batch_and_xl_head(
+def test_accuracy_tier_large_recipes_use_wide_multilevel_head(
     variant,
     batch_size,
     accumulation,
-    epochs,
-    initial_depth,
-    unfreeze_interval,
+    hidden_dim,
+    nheads,
+    feedforward,
+    decoder_layers,
+    intermediate_layers,
 ):
     config = SLConfig.fromfile(f"configs/lineae/lineae_{variant.lower()}.py")
     assert config.training_profile == "single_gpu_96gb_accuracy"
@@ -411,7 +419,9 @@ def test_accuracy_tier_large_recipes_keep_effective_batch_and_xl_head(
     assert config.multi_scale_train is True
     assert config.use_checkpoint is True
     assert config.use_ema is False
-    assert config.dino_intermediate_layers == []
+    assert config.accuracy_head_schema == "wide_multilevel_residual_v1"
+    assert config.dino_intermediate_layers == intermediate_layers
+    assert config.dino_intermediate_fusion_schema == "residual_final_v1"
     assert config.distill_weight == 0.0
     assert config.distill_feature_weight == 0.0
     assert config.batch_size_train == batch_size
@@ -425,16 +435,78 @@ def test_accuracy_tier_large_recipes_keep_effective_batch_and_xl_head(
     assert config.use_warmup is False
     assert config.model_parameters[0]["lr"] == 1e-5
     assert config.model_parameters[1]["lr"] == 1e-5
-    assert config.epochs == epochs
-    assert config.backbone_trainable_layers == initial_depth
-    assert config.initial_freeze_epochs == 5
-    assert config.unfreeze_interval == unfreeze_interval
-    assert config.in_channels_encoder == [256, 256, 256]
-    assert config.hidden_dim == 256
-    assert config.dec_layers == 6
-    assert config.eval_idx == 5
+    assert config.epochs == 50
+    assert config.progressive_unfreeze is False
+    assert config.backbone_trainable_layers == 0
+    assert config.initial_freeze_epochs == 0
+    assert config.unfreeze_interval == 0
+    assert config.backbone_pyramid_channels == hidden_dim
+    assert config.in_channels_encoder == [hidden_dim] * 3
+    assert config.encoder_use_indices == [1, 2]
+    assert config.encoder_num_layers == 2
+    assert config.hidden_dim == hidden_dim
+    assert config.feat_channels_decoder == [hidden_dim] * 3
+    assert config.nheads == nheads
+    assert hidden_dim // nheads == 32
+    assert config.dim_feedforward == feedforward
+    assert config.expansion == 0.5
+    assert config.depth_mult == 1.0
+    assert config.dec_layers == decoder_layers
+    assert config.eval_idx == decoder_layers - 1
+    assert config.dec_n_points == [8, 4, 2]
+    assert config.reg_max == 32
+    assert config.dropout == 0.1
     assert config.num_queries == 1100
     assert config.num_select == 300
+
+
+def test_wide_multilevel_accuracy_head_runs_small_forward_and_backward():
+    torch.manual_seed(103)
+    config = SLConfig.fromfile("configs/lineae/lineae_2xl.py")
+    config.variant = None
+    config.backbone = "dinov3_vitt"
+    config.backbone_weights = None
+    config.pretrained = False
+    config.use_checkpoint = False
+    config.backbone_pyramid_channels = 32
+    config.dino_intermediate_layers = [3, 7, 11]
+    config.in_channels_encoder = [32, 32, 32]
+    config.hidden_dim = 32
+    config.feat_channels_decoder = [32, 32, 32]
+    config.nheads = 4
+    config.dim_feedforward = 64
+    config.dec_layers = 2
+    config.eval_idx = 1
+    config.num_queries = 20
+    config.num_select = 10
+    config.dn_number = 4
+    config.eval_spatial_size = (64, 64)
+    config.enforce_variant_input = False
+    config.enforce_variant_pyramid = False
+    model, postprocessor = create(config, "modelname")
+    criterion = create(config, "criterionname")
+    model.train()
+    criterion.train()
+    images = torch.randn(1, 3, 64, 64)
+    targets = [{
+        "labels": torch.tensor([0]),
+        "lines": torch.tensor([[0.1, 0.2, 0.8, 0.9]]),
+    }]
+
+    outputs = model(images, targets)
+    loss = sum(criterion(outputs, targets).values())
+    loss.backward()
+
+    assert outputs["pred_logits"].shape == (1, 20, 2)
+    assert outputs["pred_lines"].shape == (1, 20, 4)
+    assert torch.isfinite(loss)
+    assert torch.isfinite(model.backbone.intermediate_fusion.residual_gates.grad).all()
+    model.eval().deploy()
+    postprocessor.deploy()
+    with torch.inference_mode():
+        deployed = postprocessor(model(images), torch.ones(1, 2))
+    assert deployed[0].shape == (1, 10, 4)
+    assert deployed[1].shape == (1, 10)
 
 
 @pytest.mark.parametrize("variant", ["A", "F", "P", "N", "T", "S", "M", "L", "X"])
@@ -541,8 +613,8 @@ def test_readme_documents_dino_recipe_fully_unfrozen_horizon(label, path):
 @pytest.mark.parametrize(
     "label,path,fully_unfrozen_epoch",
     [
-        ("2XL no-KD teacher candidate", "configs/lineae/lineae_2xl.py", 43),
-        ("3XL no-KD teacher candidate", "configs/lineae/lineae_3xl.py", 30),
+        ("2XL no-KD teacher candidate", "configs/lineae/lineae_2xl.py", 0),
+        ("3XL no-KD teacher candidate", "configs/lineae/lineae_3xl.py", 0),
     ],
 )
 def test_readme_documents_large_dino_fully_unfrozen_horizon(

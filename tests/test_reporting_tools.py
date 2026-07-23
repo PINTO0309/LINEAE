@@ -515,6 +515,41 @@ def test_readme_documents_fresh_best_checkpoint_initialization():
     assert "newly initialized keys" in section
 
 
+def test_readme_documents_dino_core_only_initialization():
+    readme = Path("README.md").read_text(encoding="utf-8")
+    section = readme.split("### Fresh accuracy head from a trained DINO core", 1)[
+        1
+    ].split("Full-training configs", 1)[0]
+    assert "`--init-backbone-checkpoint`" in section
+    assert "`backbone.core.*`" in section
+    assert "same variant" in section
+    assert "key, shape, and dtype" in section
+    assert "`model` or `ema_model`" in section
+    assert "Optimizer moments" in section
+    assert "mutually exclusive with `--resume`, `--init-checkpoint`" in section
+    assert "resolved_config.json" in section
+    assert "run_manifest.json" in section
+    assert "lineae_${MODEL}-wide-core-init-seed42" in section
+
+
+def test_readme_documents_wide_2xl_3xl_accuracy_heads():
+    readme = Path("README.md").read_text(encoding="utf-8")
+    section = readme.split("## 2XL / 3XL accuracy workflow", 1)[1].split(
+        "## Distillation", 1
+    )[0]
+    for expected in (
+        "311.5M backbone + 60.7M after-backbone = 372.2M",
+        "853.7M + 106.8M = 960.5M",
+        "1,173.6 GFLOPs",
+        "3,043.2 GFLOPs",
+        "P3 bypasses global Transformer attention",
+        "entire DINO core is trainable from epoch 0",
+        "`--init-backbone-checkpoint`",
+        "former 256-channel/six-decoder architecture",
+    ):
+        assert expected in section
+
+
 def test_readme_documents_a_through_x_supervised_commands():
     readme = Path("README.md").read_text(encoding="utf-8")
     workflow = readme.split(
