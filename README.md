@@ -678,15 +678,52 @@ The script applies sigmoid to class-0 logits, converts normalized `[x1,y1,x2,y2]
 LINEAE is distributed under the root [Apache License 2.0](LICENSE).
 
 ## Cited / Acknowledgement
-
-```bibtex
-@misc{janampa2025linea,
-  title={LINEA: Fast and Accurate Line Detection Using Scalable Transformers},
-  author={Sebastian Janampa and Marios Pattichis},
-  year={2025},
-  eprint={2505.16264},
-  archivePrefix={arXiv},
-  primaryClass={cs.CV},
-  url={https://arxiv.org/abs/2505.16264},
-}
-```
+- https://github.com/SebastianJanampa/LINEA
+  ```bibtex
+  @misc{janampa2025linea,
+    title={LINEA: Fast and Accurate Line Detection Using Scalable Transformers},
+    author={Sebastian Janampa and Marios Pattichis},
+    year={2025},
+    eprint={2505.16264},
+    archivePrefix={arXiv},
+    primaryClass={cs.CV},
+    url={https://arxiv.org/abs/2505.16264},
+  }
+  ```
+- https://github.com/Peterande/D-FINE
+  ```bibtex
+  @misc{peng2024dfine,
+    title={D-FINE: Redefine Regression Task in DETRs as Fine-grained Distribution Refinement},
+    author={Yansong Peng and Hebei Li and Peixi Wu and Yueyi Zhang and Xiaoyan Sun and Feng Wu},
+    year={2024},
+    eprint={2410.13842},
+    archivePrefix={arXiv},
+    primaryClass={cs.CV}
+  }
+  ```
+- https://github.com/facebookresearch/dinov3
+  ```bibtex
+  @misc{simeoni2025dinov3,
+    title={{DINOv3}},
+    author={Sim{\'e}oni, Oriane and Vo, Huy V. and Seitzer, Maximilian and Baldassarre, Federico and Oquab, Maxime and Jose, Cijo and Khalidov, Vasil and Szafraniec, Marc and Yi, Seungeun and Ramamonjisoa, Micha{\"e}l and Massa, Francisco and Haziza, Daniel and Wehrstedt, Luca and Wang, Jianyuan and Darcet, Timoth{\'e}e and Moutakanni, Th{\'e}o and Sentana, Leonel and Roberts, Claire and Vedaldi, Andrea and Tolan, Jamie and Brandt, John and Couprie, Camille and Mairal, Julien and J{\'e}gou, Herv{\'e} and Labatut, Patrick and Bojanowski, Piotr},
+    year={2025},
+    eprint={2508.10104},
+    archivePrefix={arXiv},
+    primaryClass={cs.CV},
+    url={https://arxiv.org/abs/2508.10104},
+  }
+  ```
+- https://github.com/PINTO0309/gazelle-dinov3
+  ```bibtex
+  @software{Hyodo_2025_gazelle_dinov3,
+    author    = {Katsuya Hyodo},
+    title     = {gazelle-dinov3: Gaze-LLE-DINOv3},
+    year      = {2025},
+    month     = {oct},
+    publisher = {Zenodo},
+    version   = {1.0.0},
+    doi       = {10.5281/zenodo.17413165},
+    url       = {https://github.com/PINTO0309/gazelle-dinov3},
+    abstract  = {A model for activating human gaze regions using heat maps, built with DINOv3.},
+  }
+  ```
