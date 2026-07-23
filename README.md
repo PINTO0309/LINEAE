@@ -20,24 +20,24 @@ The authoritative mapping, including exact bootstrap filenames, is in `models/li
 
 The following exact counts are produced from each committed default config with pretrained loading disabled and after `model.deploy()`, matching the graph used by the Torch/ONNX/TensorRT benchmarks. `Backbone` means `model.backbone`: for DINO variants it includes the Simple Feature Pyramid (SFP), and for A/F/P it includes the efficient synthetic P5. `After backbone` is the hybrid encoder plus decoder. Default output-KD adds no student parameters; optional feature-KD projections are training-only and are removed by `deploy()`.
 
-| Variant | Backbone<br>(M) | After<br>Backbone<br>(M) | Total<br>(M) | GFLOPs | AP<sup>5</sup> | AP<sup>10</sup> | AP<sup>15</sup> |
-| :-----: | -----------: | -----------------: | --------: | -----: | -------------: | --------------: | --------------: |
-| LINEA-N |          1.8 |                2.0 |       3.9 |   11.5 |58.7|65.0|67.9|
-| LINEA-S |          2.2 |                6.2 |       8.4 |   29.4 |58.4|64.7|67.6|
-| LINEA-M |          6.0 |                7.3 |      13.3 |   43.4 |59.5|66.3|69.1|
-| LINEA-L |          13.5 |              11.5 |      25.0 |   81.5 |61.0|67.9|70.8|
-| A       |          0.3 |                1.6 |       1.9 |    2.5 ||||
-| F       |          0.7 |                1.9 |       2.6 |    4.7 ||||
-| P       |          1.0 |                2.0 |       3.0 |   10.8 ||||
-| N       |          1.9 |                2.1 |       3.9 |   11.7 ||||
-| T       |          2.2 |                6.2 |       8.4 |   29.4 ||||
-| S       |          6.0 |                5.9 |      11.9 |   39.2 |62.4|68.9|71.7|
-| M       |         10.6 |                6.7 |      17.3 |   55.5 ||||
-| L       |         23.0 |                6.7 |      29.7 |   94.5 ||||
-| X       |         30.1 |                8.1 |      38.2 |  121.2 ||||
-| XL      |         88.4 |                8.1 |      96.5 |  306.3 ||||
-| 2XL     |        306.8 |                8.1 |     314.9 | 1005.6 ||||
-| 3XL     |        845.2 |                8.1 |     853.3 | 2731.4 |73.7|78.2|80.0|
+| Variant | Backbone<br>(M) | After<br>Backbone<br>(M) | Total<br>(M) | GFLOPs | WF<br>AP<sup>5</sup> | WF<br>AP<sup>10</sup> | WF<br>AP<sup>15</sup> | YU<br>AP<sup>5</sup> | YU<br>AP<sup>10</sup> | YU<br>AP<sup>15</sup> |
+| :-----: | -----------: | -----------------: | --------: | -----: | -------------: | --------------: | --------------: | -------------: | --------------: | --------------: |
+| LINEA-N |          1.8 |                2.0 |       3.9 |   11.5 |58.7|65.0|67.9|27.3|30.5|32.5|
+| LINEA-S |          2.2 |                6.2 |       8.4 |   29.4 |58.4|64.7|67.6|28.9|32.6|34.8|
+| LINEA-M |          6.0 |                7.3 |      13.3 |   43.4 |59.5|66.3|69.1|30.3|34.5|36.7|
+| LINEA-L |          13.5 |              11.5 |      25.0 |   81.5 |61.0|67.9|70.8|30.9|34.9|37.3|
+| A       |          0.3 |                1.6 |       1.9 |    2.5 |||||||
+| F       |          0.7 |                1.9 |       2.6 |    4.7 |||||||
+| P       |          1.0 |                2.0 |       3.0 |   10.8 |||||||
+| N       |          1.9 |                2.1 |       3.9 |   11.7 |||||||
+| T       |          2.2 |                6.2 |       8.4 |   29.4 |||||||
+| S       |          6.0 |                5.9 |      11.9 |   39.2 |62.4|68.9|71.7|29.2|33.2|35.4|
+| M       |         10.6 |                6.7 |      17.3 |   55.5 |||||||
+| L       |         23.0 |                6.7 |      29.7 |   94.5 |||||||
+| X       |         30.1 |                8.1 |      38.2 |  121.2 |||||||
+| XL      |         88.4 |                8.1 |      96.5 |  306.3 |||||||
+| 2XL     |        306.8 |                8.1 |     314.9 | 1005.6 |||||||
+| 3XL     |        845.2 |                8.1 |     853.3 | 2731.4 |73.7|78.2|80.0|31.1|34.7|36.5|
 
 `M` is decimal millions (`1 M = 1,000,000` parameters). GFLOPs are the batch-1 forward-operation count reported by the locked `calflops` implementation after `model.deploy()` at each variant's canonical input size: 320 for A, 416 for F, and 640 for P through 3XL. One multiply-accumulate contributes two FLOPs, with other counted operations added separately. Values are rounded to one decimal place; GFLOPs describe graph complexity rather than measured hardware throughput, and the parameter regression test retains the exact integer counts. The 2XL/3XL graph is reconstructed and executed on meta tensors for this accounting, avoiding parameter duplication and real multi-teraflop CPU computation while retaining the same module hooks and shapes.
 
