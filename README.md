@@ -37,7 +37,7 @@ The following exact counts are produced from each committed default config with 
 | X       |         30.1 |                8.1 |      38.2 |  121.2 ||||
 | XL      |         88.4 |                8.1 |      96.5 |  306.3 ||||
 | 2XL     |        306.8 |                8.1 |     314.9 | 1005.6 ||||
-| 3XL     |        845.2 |                8.1 |     853.3 | 2731.4 ||||
+| 3XL     |        845.2 |                8.1 |     853.3 | 2731.4 |73.7|78.2|80.0|
 
 `M` is decimal millions (`1 M = 1,000,000` parameters). GFLOPs are the batch-1 forward-operation count reported by the locked `calflops` implementation after `model.deploy()` at each variant's canonical input size: 320 for A, 416 for F, and 640 for P through 3XL. One multiply-accumulate contributes two FLOPs, with other counted operations added separately. Values are rounded to one decimal place; GFLOPs describe graph complexity rather than measured hardware throughput, and the parameter regression test retains the exact integer counts. The 2XL/3XL graph is reconstructed and executed on meta tensors for this accounting, avoiding parameter duplication and real multi-teraflop CPU computation while retaining the same module hooks and shapes.
 
