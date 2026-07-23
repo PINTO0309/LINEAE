@@ -635,6 +635,45 @@ Online-teacher training cost can be measured without starting a full run using `
 
 ## Measurement and deployment
 
+`tools/evaluate_checkpoint.py` evaluates one checkpoint on any repeatable set of validation roots and can optionally render a fixed prefix from each dataset. The left half of every PNG shows GT in green; the right half shows score-filtered predictions in red. Rendering is disabled by default. `--render-count N` enables it, `--render-score-threshold` controls the minimum class-0 score, and `--render-max-predictions` caps the number of drawn lines after score sorting. Dataset names become output subdirectory names, so the following command writes metrics to one JSON report and ten PNG comparisons each under `..._renders/wireframe/` and `..._renders/york/`:
+
+```bash
+uv run --locked python tools/evaluate_checkpoint.py \
+-c configs/lineae/lineae_3xl.py \
+--checkpoint outputs/lineae_3xl-seed42/checkpoint_best.pth \
+--dataset wireframe=data/wireframe_processed \
+--dataset york=data/york_processed \
+--device cuda \
+--amp \
+--batch-size 1 \
+--num-workers 8 \
+--render-count 10 \
+--render-score-threshold 0.3 \
+--render-max-predictions 100 \
+--render-output-dir outputs/evaluations/lineae_3xl-seed42_renders \
+--output outputs/evaluations/lineae_3xl-seed42.json
+```
+
+If `--render-output-dir` is omitted, the default is `<output-stem>_renders` beside the JSON report. Existing per-dataset render directories are never replaced implicitly; choose a new render root or remove the old directory explicitly before rerunning. The JSON report records the effective render settings and each dataset's absolute render directory.
+
+For a visual check without full-dataset sAP evaluation, add `--render-only`. This path does not construct the criterion or evaluation DataLoader, does not hash the checkpoint, and runs inference only on the first `--render-count` samples of each requested dataset. `--output` is optional and, when supplied, receives a diagnostic `lineae_render_v1` manifest rather than a qualification-compatible evaluation report. Render-only permits `--render-max-predictions` up to the model's `num_queries`, independently of the configured deployment `num_select`:
+
+```bash
+uv run --locked python tools/evaluate_checkpoint.py \
+-c configs/lineae/lineae_3xl.py \
+--checkpoint outputs/lineae_3xl-nokd-full-unfreeze-seed42-wide/checkpoint_best.pth \
+--dataset wireframe=data/wireframe_processed \
+--dataset york=data/york_processed \
+--device cuda \
+--amp \
+--batch-size 1 \
+--render-only \
+--render-count 100 \
+--render-score-threshold 0.2 \
+--render-max-predictions 600 \
+--render-output-dir outputs/evaluations/lineae_3xl-nokd-full-unfreeze-seed42_renders
+```
+
 `tools/benchmark.py` first applies LINEA's fused deploy conversion, then records FLOPs/MACs, parameters, peak memory, raw samples, and batch-1 p50/p95 Torch latency. `tools/export_onnx.py` exports the same fused model, validates it with `onnx.checker`, and simplifies it with onnxsim by default (`--disable-onnxsim` is available for diagnosis); it does not start ONNX Runtime or perform numerical parity. The exported top-k defaults to the config's `num_select`, but `--num-select K` (or its `--topk K` alias) embeds any validated `1 <= K <= num_queries` value into the fixed ONNX output shapes and records the effective and configured values in the `.export.json` report. `tools/benchmark_tensorrt.py` separately builds with TF32 disabled, measures the engine, and gates its actual FP16 outputs against ONNX Runtime using the query/endpoint-order-invariant comparison. `tools/evaluate_onnx.py` separately enforces full-dataset deployment sAP5/10/15 parity against the hash-matched PyTorch evaluation before TensorRT benchmarking; its CUDA ORT mode disables TF32 and CPU execution-provider fallback. For a custom export top-k, create the PyTorch report with the same `tools/evaluate_checkpoint.py --num-select K`; `tools/evaluate_onnx.py` reads K from the hash-bound export report. `tools/analyze_pareto.py` identifies non-dominated variants, and `tools/generate_model_card.py` turns archived reports into model cards. It requires a hash-matched Pareto report and refuses to label a dominated model as a qualified candidate.
 
 For example, this exports XL with 500 retained line queries without changing its training config:
