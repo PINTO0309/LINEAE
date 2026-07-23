@@ -18,7 +18,7 @@ The authoritative mapping, including exact bootstrap filenames, is in `models/li
 
 ## Parameter inventory
 
-The following exact counts are produced from each committed default config with pretrained loading disabled and after `model.deploy()`, matching the graph used by the Torch/ONNX/TensorRT benchmarks. `Backbone` means `model.backbone`: for DINO variants it includes the Simple Feature Pyramid (SFP), and for A/F/P it includes the efficient synthetic P5. `After backbone` is the hybrid encoder plus decoder. Default output-KD adds no student parameters; optional feature-KD projections are training-only and are removed by `deploy()`.
+The following exact counts are produced from each committed default config with pretrained loading disabled and after `model.deploy()`, matching the graph used by the Torch/ONNX/TensorRT benchmarks. `Backbone` means `model.backbone`: for DINO variants it includes the Simple Feature Pyramid (SFP), and for A/F/P it includes the efficient synthetic P5. `Head` is the hybrid encoder plus decoder. Default output-KD adds no student parameters; optional feature-KD projections are training-only and are removed by `deploy()`.
 
 | Var | Backbone<br>(M) | Head<br>(M) | Total<br>(M) | GFLOPs | WF<br>AP<sup>5</sup> | 　<br>AP<sup>10</sup> | 　<br>AP<sup>15</sup> | YU<br>AP<sup>5</sup> | 　<br>AP<sup>10</sup> | 　<br>AP<sup>15</sup> |
 | :-----: | -----------: | -----------------: | --------: | -----: | -------------: | --------------: | --------------: | -------------: | --------------: | --------------: |
