@@ -1,6 +1,6 @@
 # [WIP] LINEAE
 
-LINEAE is an experimental successor to [LINEA](https://github.com/SebastianJanampa/LINEA) aimed at improving both line detection accuracy and inference speed. It keeps the LINEA Wireframe/YorkUrban data and detector semantics, and adds selectable HGNetV2/DINOv3 backbones, progressive unfreezing, reproducible resume, XL-to-smaller line-set distillation, an optional qualified-X teacher cascade, EMA, projected feature KD/intermediate-block fusion, exact-input teacher caching, memory-efficient SDPA for every DINO variant, eval-only versioned RoPE caching, allocation-light decoder broadcasts, bounded multi-scale anchor/position caching, and deployment benchmarks.
+LINEAE (**LINEA E**nhanced) is an experimental successor to [LINEA](https://github.com/SebastianJanampa/LINEA) aimed at improving both line detection accuracy and inference speed. It keeps the LINEA Wireframe/YorkUrban data and detector semantics, and adds selectable HGNetV2/DINOv3 backbones, progressive unfreezing, reproducible resume, XL-to-smaller line-set distillation, an optional qualified-X teacher cascade, EMA, projected feature KD/intermediate-block fusion, exact-input teacher caching, memory-efficient SDPA for every DINO variant, eval-only versioned RoPE caching, allocation-light decoder broadcasts, bounded multi-scale anchor/position caching, and deployment benchmarks.
 
 https://github.com/user-attachments/assets/008f5a87-0411-4599-b699-45d163121d9c
 
