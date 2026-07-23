@@ -19,6 +19,9 @@ def build_backbone(args):
             trainable_depth=getattr(args, "backbone_trainable_layers", 2),
             use_checkpoint=getattr(args, "use_checkpoint", False),
             intermediate_layers=getattr(args, "dino_intermediate_layers", ()),
+            intermediate_fusion_schema=getattr(
+                args, "dino_intermediate_fusion_schema", "weighted_v1"
+            ),
         )
     if name == "dinov3_vittplus":
         return CompactDinoV3Backbone(
@@ -29,6 +32,9 @@ def build_backbone(args):
             trainable_depth=getattr(args, "backbone_trainable_layers", 2),
             use_checkpoint=getattr(args, "use_checkpoint", False),
             intermediate_layers=getattr(args, "dino_intermediate_layers", ()),
+            intermediate_fusion_schema=getattr(
+                args, "dino_intermediate_fusion_schema", "weighted_v1"
+            ),
         )
     official_specs = {
         "dinov3_vits16": dict(
@@ -55,6 +61,9 @@ def build_backbone(args):
             trainable_depth=getattr(args, "backbone_trainable_layers", 2),
             use_checkpoint=getattr(args, "use_checkpoint", False),
             intermediate_layers=getattr(args, "dino_intermediate_layers", ()),
+            intermediate_fusion_schema=getattr(
+                args, "dino_intermediate_fusion_schema", "weighted_v1"
+            ),
         )
 
     if name.startswith("hgnetv2_"):

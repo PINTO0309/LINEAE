@@ -10,6 +10,7 @@ from models.lineae.backbones.dinov3 import (
     Attention,
     CompactDinoV3,
     CompactDinoV3Backbone,
+    DinoFinalResidualFusion,
     OfficialDinoV3,
     OfficialDinoV3Backbone,
     OfficialAttention,
@@ -412,6 +413,44 @@ def test_intermediate_block_fusion_is_an_independent_trainable_adapter():
     sum(feature.square().mean() for feature in features).backward()
     assert backbone.intermediate_fusion.level_weights.grad is not None
     assert backbone.intermediate_fusion.projection.weight.grad is not None
+
+
+def test_final_residual_fusion_is_identity_initialized_and_trains_gates():
+    torch.manual_seed(101)
+    fusion = DinoFinalResidualFusion(channels=8, levels=4)
+    features = [
+        torch.randn(2, 8, 3, 3, requires_grad=True)
+        for _ in range(4)
+    ]
+
+    output = fusion(features)
+    torch.testing.assert_close(output, features[-1], rtol=0, atol=0)
+    output.square().mean().backward()
+
+    assert torch.isfinite(fusion.residual_gates.grad).all()
+    assert torch.count_nonzero(fusion.residual_gates.grad)
+    assert torch.isfinite(fusion.projection.weight.grad).all()
+
+
+def test_official_backbone_selects_final_residual_fusion_schema():
+    backbone = OfficialDinoV3Backbone(
+        embed_dim=32,
+        num_heads=4,
+        ffn_ratio=2.0,
+        swiglu=False,
+        depth=4,
+        weights_path=None,
+        pyramid_channels=16,
+        intermediate_layers=(0, 1, 2, 3),
+        intermediate_fusion_schema="residual_final_v1",
+    )
+    assert isinstance(backbone.intermediate_fusion, DinoFinalResidualFusion)
+    features = backbone(torch.randn(2, 3, 32, 32))
+    assert [tuple(feature.shape) for feature in features] == [
+        (2, 16, 4, 4),
+        (2, 16, 2, 2),
+        (2, 16, 1, 1),
+    ]
 
 
 def test_intermediate_layers_must_be_sorted_unique_and_have_multiple_levels():

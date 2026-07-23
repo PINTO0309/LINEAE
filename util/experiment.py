@@ -91,6 +91,19 @@ def write_experiment_records(
     if annotations.is_dir():
         for path in sorted(annotations.glob("*.json")):
             annotation_records.append(_file_record(path))
+    training_source_records = []
+    for source in getattr(args, "training_dataset_sources", []):
+        training_source_records.append({
+            "name": source["name"],
+            "split": source["split"],
+            "root": str(Path(source["root"]).resolve()),
+            "image_dir": str(Path(source["image_dir"]).resolve()),
+            "annotation": _file_record(
+                source["annotation_file"],
+                known_sha256=source.get("annotation_sha256"),
+            ),
+            "samples": int(source["samples"]),
+        })
 
     report = getattr(model.backbone, "checkpoint_report", None)
     if report is not None:
@@ -127,6 +140,20 @@ def write_experiment_records(
         model_initialization_record["load_report"] = _jsonable(
             initialization_load_report
         )
+    backbone_model_initialization_record = _file_record(
+        getattr(args, "init_backbone_checkpoint", None),
+        known_sha256=getattr(args, "init_backbone_checkpoint_sha256", None),
+    )
+    backbone_initialization_load_report = getattr(
+        args, "init_backbone_checkpoint_load_report", None
+    )
+    if (
+        backbone_model_initialization_record is not None
+        and backbone_initialization_load_report is not None
+    ):
+        backbone_model_initialization_record["load_report"] = _jsonable(
+            backbone_initialization_load_report
+        )
     manifest = {
         "command": [sys.executable, *sys.argv],
         "config_file": str(Path(args.config_file).resolve()),
@@ -134,6 +161,11 @@ def write_experiment_records(
         "dataset": {
             "root": str(dataset_root.resolve()),
             "annotations": annotation_records,
+            "ensemble": bool(getattr(args, "ensemble", False)),
+            "training_sources": training_source_records,
+            "training_samples": getattr(
+                args, "training_dataset_sample_count", None
+            ),
             "image_preprocess_schema": getattr(
                 args, "image_preprocess_schema", IMAGE_PREPROCESS_SCHEMA
             ),
@@ -142,6 +174,9 @@ def write_experiment_records(
         "checkpoints": {
             "initialization": _file_record(getattr(args, "backbone_weights", None)),
             "model_initialization": model_initialization_record,
+            "backbone_model_initialization": (
+                backbone_model_initialization_record
+            ),
             "resume": _file_record(getattr(args, "resume", None)),
             "teacher": _file_record(
                 getattr(args, "distill_teacher_checkpoint", None)
@@ -153,6 +188,7 @@ def write_experiment_records(
             "world_size": getattr(args, "world_size", 1),
             "batch_size_per_rank": getattr(args, "batch_size_train", None),
             "gradient_accumulation_steps": accumulation,
+            "drop_last": not bool(getattr(args, "ensemble", False)),
             "effective_batch_size": (
                 getattr(
                     args,

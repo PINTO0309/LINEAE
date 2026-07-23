@@ -26,8 +26,8 @@ VARIANTS = {
     "L": VariantSpec("L", "dinov3_vits16", "ckpts/dinov3_vits16_pretrain_lvd1689m-08c60483.pth", 640, "imagenet", 256),
     "X": VariantSpec("X", "dinov3_vits16plus", "ckpts/dinov3_vits16plus_pretrain_lvd1689m-4057cbaa.pth", 640, "imagenet", 256),
     "XL": VariantSpec("XL", "dinov3_vitb16", "ckpts/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth", 640, "imagenet", 256),
-    "2XL": VariantSpec("2XL", "dinov3_vitl16", "ckpts/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth", 640, "imagenet", 256),
-    "3XL": VariantSpec("3XL", "dinov3_vith16plus", "ckpts/dinov3_vith16plus_pretrain_lvd1689m-7c1da9a5.pth", 640, "imagenet", 256),
+    "2XL": VariantSpec("2XL", "dinov3_vitl16", "ckpts/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth", 640, "imagenet", 512),
+    "3XL": VariantSpec("3XL", "dinov3_vith16plus", "ckpts/dinov3_vith16plus_pretrain_lvd1689m-7c1da9a5.pth", 640, "imagenet", 640),
 }
 
 PREPROCESS_PROFILES = {

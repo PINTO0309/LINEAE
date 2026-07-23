@@ -29,9 +29,11 @@ from util.training_state import (
     build_training_checkpoint,
     collect_distributed_rng_states,
     initialize_model_from_checkpoint,
+    initialize_backbone_from_checkpoint,
     restore_checkpoint_rng_state,
     restore_training_checkpoint,
     validate_initialization_checkpoint,
+    validate_backbone_initialization_checkpoint,
     validate_resume_checkpoint,
 )
 from warmup import LinearWarmup
@@ -124,6 +126,39 @@ def _resume_checkpoint_stub(config=None, **updates):
 
 def test_init_checkpoint_cli_is_distinct_from_resume_and_eval():
     parser = get_args_parser()
+    defaults = parser.parse_args(["-c", "config.py"])
+    assert defaults.ensemble is False
+    assert defaults.ensemble_york_path == "data/york_processed"
+    ensemble_args = parser.parse_args(
+        ["-c", "config.py", "--ensemble", "--ensemble-york-path", "/data/york"]
+    )
+    assert ensemble_args.ensemble is True
+    assert ensemble_args.ensemble_york_path == "/data/york"
+    validate_checkpoint_cli_args(ensemble_args)
+    ensemble_init_args = parser.parse_args(
+        [
+            "-c",
+            "config.py",
+            "--ensemble",
+            "--init-checkpoint",
+            "checkpoint_best.pth",
+        ]
+    )
+    validate_checkpoint_cli_args(ensemble_init_args)
+    ensemble_backbone_init_args = parser.parse_args(
+        [
+            "-c",
+            "config.py",
+            "--ensemble",
+            "--init-backbone-checkpoint",
+            "checkpoint_best.pth",
+        ]
+    )
+    validate_checkpoint_cli_args(ensemble_backbone_init_args)
+    ensemble_args.eval = True
+    with pytest.raises(ValueError, match="training-only"):
+        validate_checkpoint_cli_args(ensemble_args)
+
     args = parser.parse_args(
         ["-c", "config.py", "--init-checkpoint", "checkpoint_best.pth"]
     )
@@ -141,6 +176,38 @@ def test_init_checkpoint_cli_is_distinct_from_resume_and_eval():
     args.start_epoch = 1
     with pytest.raises(ValueError, match="start_epoch=0"):
         validate_checkpoint_cli_args(args)
+
+    backbone_args = parser.parse_args(
+        ["-c", "config.py", "--init-backbone-checkpoint", "backbone_best.pth"]
+    )
+    assert backbone_args.init_backbone_checkpoint == "backbone_best.pth"
+    validate_checkpoint_cli_args(backbone_args)
+    backbone_args.init_checkpoint = "checkpoint_best.pth"
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        validate_checkpoint_cli_args(backbone_args)
+    backbone_eval_args = parser.parse_args(
+        [
+            "-c",
+            "config.py",
+            "--init-backbone-checkpoint",
+            "backbone_best.pth",
+            "--eval",
+        ]
+    )
+    with pytest.raises(ValueError, match="fresh training"):
+        validate_checkpoint_cli_args(backbone_eval_args)
+    backbone_epoch_args = parser.parse_args(
+        [
+            "-c",
+            "config.py",
+            "--init-backbone-checkpoint",
+            "backbone_best.pth",
+            "--start_epoch",
+            "1",
+        ]
+    )
+    with pytest.raises(ValueError, match="start_epoch=0"):
+        validate_checkpoint_cli_args(backbone_epoch_args)
 
 
 def test_init_checkpoint_provenance_is_written_to_experiment_records(
@@ -164,6 +231,9 @@ def test_init_checkpoint_provenance_is_written_to_experiment_records(
             "ignored_source_keys": [],
             "strict_shared_state": True,
         },
+        init_backbone_checkpoint="",
+        init_backbone_checkpoint_sha256=None,
+        init_backbone_checkpoint_load_report=None,
         resume="",
         distill_weight=0.0,
         seed=43,
@@ -192,6 +262,324 @@ def test_init_checkpoint_provenance_is_written_to_experiment_records(
     resolved = json.loads((output_dir / "resolved_config.json").read_text())
     assert resolved["init_checkpoint"] == str(initialization)
     assert resolved["init_checkpoint_sha256"] == initialization_sha256
+
+
+def test_ensemble_dataset_provenance_is_written_to_records_and_checkpoint(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(torch.backends.cudnn, "version", lambda: None)
+    primary_annotation = tmp_path / "primary_train.json"
+    york_train_annotation = tmp_path / "york_train.json"
+    york_val_annotation = tmp_path / "york_val.json"
+    primary_annotation.write_bytes(b"primary")
+    york_train_annotation.write_bytes(b"york-train")
+    york_val_annotation.write_bytes(b"york-val")
+    york_hashes = {
+        "train": sha256_file(york_train_annotation),
+        "val": sha256_file(york_val_annotation),
+    }
+    sources = [
+        {
+            "name": "primary_train",
+            "split": "train",
+            "root": str(tmp_path),
+            "image_dir": str(tmp_path),
+            "annotation_file": str(primary_annotation),
+            "samples": 5000,
+        },
+        {
+            "name": "york_train",
+            "split": "train",
+            "root": str(tmp_path),
+            "image_dir": str(tmp_path),
+            "annotation_file": str(york_train_annotation),
+            "annotation_sha256": york_hashes["train"],
+            "samples": 0,
+        },
+        {
+            "name": "york_val",
+            "split": "val",
+            "root": str(tmp_path),
+            "image_dir": str(tmp_path),
+            "annotation_file": str(york_val_annotation),
+            "annotation_sha256": york_hashes["val"],
+            "samples": 102,
+        },
+    ]
+    args = SimpleNamespace(
+        coco_path=str(tmp_path / "wireframe"),
+        config_file="configs/lineae/lineae_n.py",
+        backbone_weights=None,
+        init_checkpoint="",
+        init_checkpoint_sha256=None,
+        init_checkpoint_load_report=None,
+        init_backbone_checkpoint="",
+        init_backbone_checkpoint_sha256=None,
+        init_backbone_checkpoint_load_report=None,
+        resume="",
+        distill_weight=0.0,
+        seed=42,
+        world_size=1,
+        batch_size_train=8,
+        gradient_accumulation_steps=1,
+        amp=False,
+        device="cpu",
+        ensemble=True,
+        ensemble_york_path=str(tmp_path),
+        ensemble_annotation_sha256=york_hashes,
+        ensemble_split_samples={"train": 0, "val": 102},
+        ensemble_training_sample_count=102,
+        training_dataset_sample_count=5102,
+        training_dataset_sources=sources,
+    )
+    model = TinyModel()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+    output_dir = tmp_path / "output"
+
+    write_experiment_records(
+        args=args,
+        model=model,
+        optimizer=optimizer,
+        output_dir=output_dir,
+        repo_root=tmp_path,
+    )
+
+    manifest = json.loads((output_dir / "run_manifest.json").read_text())
+    assert manifest["dataset"]["ensemble"] is True
+    assert manifest["dataset"]["training_samples"] == 5102
+    assert [source["samples"] for source in manifest["dataset"]["training_sources"]] == [
+        5000,
+        0,
+        102,
+    ]
+    assert manifest["dataset"]["training_sources"][2]["annotation"]["sha256"] == (
+        york_hashes["val"]
+    )
+    assert manifest["training"]["drop_last"] is False
+    checkpoint = build_training_checkpoint(
+        model=model,
+        optimizer=optimizer,
+        scheduler=None,
+        warmup_scheduler=None,
+        scaler=None,
+        epoch=0,
+        global_step=1,
+        args=args,
+        repo_root=tmp_path,
+    )
+    assert checkpoint["config"]["ensemble"] is True
+    assert checkpoint["config"]["ensemble_annotation_sha256"] == york_hashes
+    assert checkpoint["config"]["ensemble_split_samples"] == {
+        "train": 0,
+        "val": 102,
+    }
+    assert checkpoint["config"]["training_dataset_sample_count"] == 5102
+
+
+def test_backbone_checkpoint_initialization_strictly_loads_only_dino_core():
+    source = TinyModel()
+    with torch.no_grad():
+        for parameter in source.backbone.core.parameters():
+            parameter.fill_(2.0)
+        for parameter in source.head.parameters():
+            parameter.fill_(3.0)
+    args = SimpleNamespace(
+        modelname="LINEAE",
+        variant="S",
+        backbone="dinov3_test",
+        image_preprocess_schema="opencv_rgb_inter_linear_v2",
+    )
+    checkpoint = _resume_checkpoint_stub(
+        config=vars(args),
+        model=source.state_dict(),
+        epoch=7,
+    )
+    target = TinyModel()
+    head_before = {
+        name: value.clone() for name, value in target.head.state_dict().items()
+    }
+
+    report = initialize_backbone_from_checkpoint(
+        checkpoint,
+        model=target,
+        args=args,
+    )
+
+    for name, value in target.backbone.core.state_dict().items():
+        assert torch.equal(value, source.backbone.core.state_dict()[name])
+    for name, value in target.head.state_dict().items():
+        assert torch.equal(value, head_before[name])
+    assert report["source_epoch"] == 7
+    assert report["inference_model"] == "model"
+    assert report["loaded_tensor_count"] == len(source.backbone.core.state_dict())
+    assert report["ignored_source_tensor_count"] == len(source.head.state_dict())
+    assert report["strict_core_state"] is True
+
+
+def test_backbone_checkpoint_initialization_selects_ema_core():
+    source = TinyModel()
+    ema_state = {
+        name: value.detach().clone().add_(4.0)
+        for name, value in source.state_dict().items()
+    }
+    args = SimpleNamespace(
+        modelname="LINEAE",
+        variant="S",
+        backbone="dinov3_test",
+        image_preprocess_schema="opencv_rgb_inter_linear_v2",
+    )
+    checkpoint = _resume_checkpoint_stub(
+        config=vars(args),
+        model=source.state_dict(),
+        inference_model="ema_model",
+        ema_model={"model": ema_state},
+        epoch=9,
+    )
+    target = TinyModel()
+    head_before = {
+        name: value.clone() for name, value in target.head.state_dict().items()
+    }
+
+    report = initialize_backbone_from_checkpoint(
+        checkpoint,
+        model=target,
+        args=args,
+    )
+
+    selected_core = {
+        name.removeprefix("backbone.core."): value
+        for name, value in ema_state.items()
+        if name.startswith("backbone.core.")
+    }
+    torch.testing.assert_close(target.backbone.core.state_dict(), selected_core)
+    torch.testing.assert_close(target.head.state_dict(), head_before)
+    assert report["source_epoch"] == 9
+    assert report["inference_model"] == "ema_model"
+
+
+def test_backbone_init_provenance_is_written_to_experiment_records(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(torch.backends.cudnn, "version", lambda: None)
+    initialization = tmp_path / "old_wide_head_best.pth"
+    initialization.write_bytes(b"same-variant DINO core")
+    initialization_sha256 = sha256_file(initialization)
+    load_report = {
+        "source_epoch": 49,
+        "inference_model": "model",
+        "loaded_tensor_count": 368,
+        "ignored_source_tensor_count": 100,
+        "strict_core_state": True,
+    }
+    model = TinyModel()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+    args = SimpleNamespace(
+        coco_path=str(tmp_path / "dataset"),
+        config_file="configs/lineae/lineae_2xl.py",
+        backbone_weights=None,
+        init_checkpoint="",
+        init_checkpoint_sha256=None,
+        init_checkpoint_load_report=None,
+        init_backbone_checkpoint=str(initialization),
+        init_backbone_checkpoint_sha256=initialization_sha256,
+        init_backbone_checkpoint_load_report=load_report,
+        resume="",
+        distill_weight=0.0,
+        seed=42,
+        world_size=1,
+        batch_size_train=4,
+        gradient_accumulation_steps=2,
+        amp=False,
+        device="cpu",
+    )
+
+    output_dir = tmp_path / "output"
+    write_experiment_records(
+        args=args,
+        model=model,
+        optimizer=optimizer,
+        output_dir=output_dir,
+        repo_root=tmp_path,
+    )
+
+    manifest = json.loads((output_dir / "run_manifest.json").read_text())
+    record = manifest["checkpoints"]["backbone_model_initialization"]
+    assert record["path"] == str(initialization.resolve())
+    assert record["sha256"] == initialization_sha256
+    assert record["load_report"] == load_report
+    resolved = json.loads((output_dir / "resolved_config.json").read_text())
+    assert resolved["init_backbone_checkpoint"] == str(initialization)
+    assert resolved["init_backbone_checkpoint_sha256"] == initialization_sha256
+    assert resolved["init_backbone_checkpoint_load_report"] == load_report
+    checkpoint = build_training_checkpoint(
+        model=model,
+        optimizer=optimizer,
+        scheduler=None,
+        warmup_scheduler=None,
+        scaler=None,
+        epoch=0,
+        global_step=1,
+        args=args,
+        repo_root=tmp_path,
+    )
+    assert checkpoint["config"]["init_backbone_checkpoint"] == str(
+        initialization
+    )
+    assert (
+        checkpoint["config"]["init_backbone_checkpoint_sha256"]
+        == initialization_sha256
+    )
+    assert checkpoint["config"]["init_backbone_checkpoint_load_report"] == (
+        load_report
+    )
+
+
+def test_backbone_checkpoint_initialization_rejects_unsafe_sources_before_mutation():
+    source = TinyModel()
+    args = SimpleNamespace(
+        modelname="LINEAE",
+        variant="S",
+        backbone="dinov3_test",
+        image_preprocess_schema="opencv_rgb_inter_linear_v2",
+    )
+    checkpoint = _resume_checkpoint_stub(config=vars(args), model=source.state_dict())
+    assert validate_backbone_initialization_checkpoint(checkpoint, args)
+
+    target = TinyModel()
+    before = {name: value.clone() for name, value in target.state_dict().items()}
+    checkpoint["config"]["variant"] = "M"
+    with pytest.raises(ValueError, match="variant"):
+        initialize_backbone_from_checkpoint(checkpoint, model=target, args=args)
+    torch.testing.assert_close(target.state_dict(), before)
+
+    checkpoint["config"]["variant"] = "S"
+    checkpoint["epoch_complete"] = False
+    with pytest.raises(ValueError, match="completed epoch"):
+        initialize_backbone_from_checkpoint(checkpoint, model=target, args=args)
+    checkpoint["epoch_complete"] = True
+    checkpoint["format_version"] = 1
+    with pytest.raises(ValueError, match="format version"):
+        initialize_backbone_from_checkpoint(checkpoint, model=target, args=args)
+    checkpoint["format_version"] = 2
+    checkpoint["config"]["image_preprocess_schema"] = "legacy_pillow_v1"
+    with pytest.raises(ValueError, match="image preprocessing schema"):
+        initialize_backbone_from_checkpoint(checkpoint, model=target, args=args)
+    checkpoint["config"]["image_preprocess_schema"] = (
+        "opencv_rgb_inter_linear_v2"
+    )
+    checkpoint["model"] = {
+        name: value
+        for name, value in source.state_dict().items()
+        if not name.startswith("backbone.core.")
+    }
+    with pytest.raises(ValueError, match="contains no backbone.core tensors"):
+        initialize_backbone_from_checkpoint(checkpoint, model=target, args=args)
+    wrong_state = dict(source.state_dict())
+    wrong_state["backbone.core.0.weight"] = torch.zeros(3, 3)
+    checkpoint["model"] = wrong_state
+    with pytest.raises(ValueError, match="shape_or_dtype"):
+        initialize_backbone_from_checkpoint(checkpoint, model=target, args=args)
+    torch.testing.assert_close(target.state_dict(), before)
 
 
 def test_init_checkpoint_strict_loads_only_selected_model_weights():
@@ -236,6 +624,16 @@ def test_init_checkpoint_strict_loads_only_selected_model_weights():
         "strict_shared_state": True,
     }
     assert checkpoint["global_step"] == 123
+
+
+def test_old_accuracy_head_checkpoint_is_rejected_for_full_model_initialization():
+    args = SimpleNamespace(
+        accuracy_head_schema="wide_multilevel_residual_v1",
+    )
+    checkpoint = _resume_checkpoint_stub(model=TinyModel().state_dict())
+
+    with pytest.raises(ValueError, match="accuracy_head_schema"):
+        validate_initialization_checkpoint(checkpoint, args)
 
 
 def test_init_checkpoint_selects_ema_and_rejects_mismatch_before_mutation():
@@ -929,6 +1327,25 @@ def test_resume_rejects_derivative_checkpoint_before_synthetic_p5_schema():
         validate_resume_checkpoint(checkpoint, args)
 
 
+def test_resume_rejects_checkpoint_before_wide_accuracy_head_schema():
+    args = SimpleNamespace(
+        eval=False,
+        accuracy_head_schema="wide_multilevel_residual_v1",
+    )
+    checkpoint = _resume_checkpoint_stub(config={})
+
+    with pytest.raises(ValueError, match="wide multilevel accuracy-head"):
+        validate_resume_checkpoint(checkpoint, args)
+
+
+def test_resume_rejects_checkpoint_before_ensemble_dataset_contract():
+    args = SimpleNamespace(eval=False, ensemble=True)
+    checkpoint = _resume_checkpoint_stub(config={})
+
+    with pytest.raises(ValueError, match="Wireframe plus YorkUrban"):
+        validate_resume_checkpoint(checkpoint, args)
+
+
 def test_native_p5_variant_does_not_require_synthetic_p5_schema():
     args = SimpleNamespace(synthetic_p5_schema=None)
     validate_resume_checkpoint(_resume_checkpoint_stub(config={}), args)
@@ -938,6 +1355,23 @@ def test_native_p5_variant_does_not_require_synthetic_p5_schema():
     ("field", "saved", "changed"),
     [
         ("feat_channels_decoder", [256, 256, 256], [128, 128, 128]),
+        ("dino_intermediate_fusion_schema", "weighted_v1", "residual_final_v1"),
+        ("accuracy_head_schema", "legacy_xl_head_v1", "wide_multilevel_residual_v1"),
+        ("encoder_use_indices", [2], [1, 2]),
+        ("encoder_num_layers", 1, 2),
+        ("ensemble", True, False),
+        ("ensemble_york_path", "data/york_processed", "/datasets/york"),
+        (
+            "ensemble_annotation_sha256",
+            {"train": "a" * 64, "val": "b" * 64},
+            {"train": "a" * 64, "val": "c" * 64},
+        ),
+        (
+            "ensemble_split_samples",
+            {"train": 0, "val": 102},
+            {"train": 0, "val": 101},
+        ),
+        ("training_dataset_sample_count", 5102, 5101),
         ("eval_idx", 5, 2),
         ("pe_temperatureH", 20, 10),
         ("freeze_norm", False, True),
@@ -993,18 +1427,15 @@ def test_all_dino_training_recipes_reach_full_unfreeze_before_training_ends():
 
 
 @pytest.mark.parametrize(
-    "path,total_blocks,initial_depth,fully_unfrozen_epoch,fully_unfrozen_epochs",
+    "path,total_blocks",
     [
-        ("configs/lineae/lineae_2xl.py", 24, 4, 43, 7),
-        ("configs/lineae/lineae_3xl.py", 32, 6, 30, 20),
+        ("configs/lineae/lineae_2xl.py", 24),
+        ("configs/lineae/lineae_3xl.py", 32),
     ],
 )
-def test_large_accuracy_variants_complete_progressive_unfreezing(
+def test_large_accuracy_variants_are_fully_unfrozen_from_epoch_zero(
     path,
     total_blocks,
-    initial_depth,
-    fully_unfrozen_epoch,
-    fully_unfrozen_epochs,
 ):
     config = SLConfig.fromfile(path)
     schedule = [
@@ -1019,10 +1450,7 @@ def test_large_accuracy_variants_complete_progressive_unfreezing(
         for epoch in range(config.epochs)
     ]
 
-    assert schedule[:5] == [initial_depth] * 5
-    assert schedule[fully_unfrozen_epoch - 1] == total_blocks - 1
-    assert config.epochs - fully_unfrozen_epoch == fully_unfrozen_epochs
-    assert schedule[fully_unfrozen_epoch:] == [total_blocks] * fully_unfrozen_epochs
+    assert schedule == [total_blocks] * config.epochs
 
 
 def test_ema_updates_resume_and_selects_inference_weights(tmp_path):

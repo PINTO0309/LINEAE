@@ -18,6 +18,7 @@ enforce_variant_pyramid = True
 # Optional P4-resolution fusion of selected 0-based transformer blocks.
 # Keep empty for the baseline; e.g. [3, 7, 11] is an independent ablation.
 dino_intermediate_layers = []
+dino_intermediate_fusion_schema = 'weighted_v1'
 
 # Pretrained DINOv3 models use ImageNet normalization. HGNet variants override
 # these values with the original LINEA statistics.
@@ -27,6 +28,8 @@ image_std = [0.229, 0.224, 0.225]
 ## encoder
 hybrid_encoder = 'hybrid_encoder_asymmetric_conv'
 in_channels_encoder = [512, 1024, 2048]
+encoder_use_indices = [2]
+encoder_num_layers = 1
 pe_temperatureH = 20
 pe_temperatureW = 20
 

@@ -1,16 +1,18 @@
-from types import SimpleNamespace
+import json
 import random
+from types import SimpleNamespace
 
 import cv2
 import numpy as np
 import pytest
 import torch
 
-from datasets import build_dataset
+from datasets import build_dataset, resolve_ensemble_training_sources
 from datasets.collate import BatchImageCollateFunction, encoder_token_count
 from datasets.coco import make_coco_transforms
 from datasets.transforms import ColorJitter, Normalize, crop, hflip, resize, rotation
 from main import (
+    build_training_data_loader,
     configure_multiprocessing_sharing,
     create,
     data_loader_options,
@@ -38,6 +40,44 @@ def _args(**overrides):
     )
     values.update(overrides)
     return SimpleNamespace(**values)
+
+
+def _write_coco_split(root, split, image_count, *, write_images=True):
+    image_dir = root / f"{split}2017"
+    annotation_dir = root / "annotations"
+    image_dir.mkdir(parents=True, exist_ok=True)
+    annotation_dir.mkdir(parents=True, exist_ok=True)
+    images = []
+    annotations = []
+    for index in range(image_count):
+        file_name = f"{split}_{index}.png"
+        images.append({
+            "id": index,
+            "file_name": file_name,
+            "height": 16,
+            "width": 16,
+        })
+        annotations.append({
+            "id": index,
+            "image_id": index,
+            "category_id": 0,
+            "line": [1.0, 2.0, 10.0, 8.0],
+            "area": 1,
+        })
+        if write_images:
+            assert cv2.imwrite(
+                str(image_dir / file_name),
+                np.full((16, 16, 3), 127, dtype=np.uint8),
+            )
+    annotation = {
+        "images": images,
+        "annotations": annotations,
+        "categories": [{"id": 0, "name": "line"}],
+    }
+    (annotation_dir / f"lines_{split}2017.json").write_text(
+        json.dumps(annotation),
+        encoding="utf-8",
+    )
 
 
 def test_dino_normalization_profile_is_applied_once():
@@ -152,13 +192,138 @@ def test_real_wireframe_photometric_ablation_preserves_geometry_and_trains_xl():
 
 
 def test_copied_wireframe_dataset_is_readable():
-    dataset = build_dataset("val", _args())
+    args = _args(
+        batch_size_train=8,
+        multi_scale_train=False,
+        num_queries=20,
+        feat_strides=[8, 16, 32],
+    )
+    train_dataset = build_dataset("train", args)
+    dataset = build_dataset("val", args)
+    assert len(train_dataset) == 5000
+    assert not isinstance(train_dataset, torch.utils.data.ConcatDataset)
+    assert len(dataset) == 462
     image, target = dataset[0]
     assert image.shape == (3, 64, 64)
     assert target["lines"].ndim == 2 and target["lines"].shape[1] == 4
     assert torch.isfinite(image).all()
     assert torch.isfinite(target["lines"]).all()
     assert ((target["lines"] >= 0) & (target["lines"] <= 1)).all()
+    sampler = torch.utils.data.SequentialSampler(train_dataset)
+    loader = build_training_data_loader(
+        train_dataset,
+        sampler,
+        args,
+        {"num_workers": 0, "pin_memory": False},
+    )
+    assert loader.drop_last is True
+    assert len(loader) == 625
+
+
+def test_real_ensemble_dataset_includes_all_york_splits_and_keeps_wireframe_val():
+    args = _args(
+        ensemble=True,
+        ensemble_york_path="data/york_processed",
+        batch_size_train=8,
+        multi_scale_train=False,
+        num_queries=20,
+        feat_strides=[8, 16, 32],
+    )
+    sources = resolve_ensemble_training_sources(args)
+    train_dataset = build_dataset("train", args)
+    val_dataset = build_dataset("val", args)
+
+    assert [(source["name"], source["samples"]) for source in sources] == [
+        ("york_train", 0),
+        ("york_val", 102),
+    ]
+    assert len(train_dataset) == 5102
+    assert [len(dataset) for dataset in train_dataset.datasets] == [5000, 102]
+    assert len(val_dataset) == 462
+    assert args.ensemble_split_samples == {"train": 0, "val": 102}
+    assert args.ensemble_training_sample_count == 102
+    assert args.training_dataset_sample_count == 5102
+
+    sampler = torch.utils.data.RandomSampler(
+        train_dataset,
+        generator=torch.Generator().manual_seed(42),
+    )
+    loader = build_training_data_loader(
+        train_dataset,
+        sampler,
+        args,
+        {"num_workers": 0, "pin_memory": False},
+    )
+    assert loader.drop_last is False
+    assert len(loader) == 638
+
+
+def test_real_york_ensemble_sample_runs_finite_forward_and_backward():
+    torch.manual_seed(109)
+    random.seed(109)
+    np.random.seed(109)
+    config = SLConfig.fromfile("configs/lineae/lineae_n.py")
+    config.pretrained = False
+    config.eval_spatial_size = (64, 64)
+    config.enforce_variant_input = False
+    config.num_queries = 20
+    config.num_select = 10
+    config.dn_number = 4
+    config.data_aug_scales = [(64, 64)]
+    config.data_aug_scales2_resize = [32, 48]
+    config.data_aug_scales2_crop = [24, 48]
+    config.batch_size_train = 1
+    config.batch_size_val = 1
+    config.coco_path = "data/wireframe_processed"
+    config.ensemble = True
+    config.ensemble_york_path = "data/york_processed"
+    resolve_ensemble_training_sources(config)
+    dataset = build_dataset("train", config)
+    image, target = dataset[5000]
+    images, targets = BatchImageCollateFunction(base_size=64)([(image, target)])
+    model, _ = create(config, "modelname")
+    criterion = create(config, "criterionname")
+
+    outputs = model(images, targets)
+    loss = sum(criterion(outputs, targets).values())
+    loss.backward()
+
+    assert outputs["pred_logits"].shape == (1, 20, 2)
+    assert outputs["pred_lines"].shape == (1, 20, 4)
+    assert target["lines"].shape[0] > 0
+    assert torch.isfinite(target["lines"]).all()
+    assert torch.isfinite(loss)
+
+
+def test_ensemble_source_preflight_rejects_invalid_inputs(tmp_path):
+    args = _args(
+        ensemble=True,
+        ensemble_york_path=str(tmp_path / "missing"),
+    )
+    with pytest.raises(FileNotFoundError, match="image directory"):
+        resolve_ensemble_training_sources(args)
+
+    empty_root = tmp_path / "empty"
+    _write_coco_split(empty_root, "train", 0)
+    _write_coco_split(empty_root, "val", 0)
+    args.ensemble_york_path = str(empty_root)
+    with pytest.raises(ValueError, match="contains no images"):
+        resolve_ensemble_training_sources(args)
+
+    missing_image_root = tmp_path / "missing-image"
+    _write_coco_split(missing_image_root, "train", 0)
+    _write_coco_split(missing_image_root, "val", 1, write_images=False)
+    args.ensemble_york_path = str(missing_image_root)
+    with pytest.raises(FileNotFoundError, match="references missing images"):
+        resolve_ensemble_training_sources(args)
+
+    valid_root = tmp_path / "valid"
+    _write_coco_split(valid_root, "train", 0)
+    _write_coco_split(valid_root, "val", 1)
+    args.ensemble_york_path = str(valid_root)
+    args.use_lmap = True
+    with pytest.raises(ValueError, match="use_lmap=True"):
+        resolve_ensemble_training_sources(args)
 
 
 def test_crop_clips_horizontal_vertical_and_rejects_outside_or_short_lines():

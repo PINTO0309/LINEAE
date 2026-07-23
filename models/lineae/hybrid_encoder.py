@@ -348,7 +348,15 @@ class HybridEncoderAsymConv(nn.Module):
         self.feat_strides = feat_strides
         self.n_levels = n_levels
         self.hidden_dim = hidden_dim
-        self.use_encoder_idx = use_encoder_idx
+        self.use_encoder_idx = list(use_encoder_idx)
+        if len(set(self.use_encoder_idx)) != len(self.use_encoder_idx):
+            raise ValueError("encoder feature indices must be unique")
+        if any(index < 0 or index >= n_levels for index in self.use_encoder_idx):
+            raise ValueError(
+                f"encoder feature indices must be in [0, {n_levels - 1}]"
+            )
+        if self.use_encoder_idx and num_encoder_layers < 1:
+            raise ValueError("num_encoder_layers must be positive")
         self.num_encoder_layers = num_encoder_layers
         self.eval_spatial_size = eval_spatial_size
 
@@ -378,7 +386,8 @@ class HybridEncoderAsymConv(nn.Module):
             activation=enc_act)
 
         self.encoder = nn.ModuleList([
-            TransformerEncoder(copy.deepcopy(encoder_layer), num_encoder_layers) for _ in range(len(use_encoder_idx))
+            TransformerEncoder(copy.deepcopy(encoder_layer), num_encoder_layers)
+            for _ in range(len(self.use_encoder_idx))
         ])
 
         # top-down fpn
@@ -557,4 +566,6 @@ def build_hybrid_encoder(args):
         temperatureH=args.pe_temperatureH,
         temperatureW=args.pe_temperatureW,
         eval_spatial_size= args.eval_spatial_size,
+        use_encoder_idx=getattr(args, 'encoder_use_indices', [2]),
+        num_encoder_layers=getattr(args, 'encoder_num_layers', 1),
         )
