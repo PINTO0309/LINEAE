@@ -87,6 +87,7 @@ def evaluate(args) -> dict:
     )
     render_count = int(getattr(args, "render_count", 0))
     render_score_threshold = float(getattr(args, "render_score_threshold", 0.3))
+    render_endpoints = bool(getattr(args, "render_endpoints", False))
     requested_render_max = getattr(args, "render_max_predictions", None)
     render_max_predictions = (
         min(100, num_select)
@@ -122,12 +123,21 @@ def evaluate(args) -> dict:
                 else checkpoint_path.parent / f"{checkpoint_path.stem}_renders"
             )
         )
+        if render_output_root.exists() and (
+            not render_output_root.is_dir() or render_output_root.is_symlink()
+        ):
+            raise FileExistsError(
+                "refusing to use a render output root that is not a real "
+                f"directory: {render_output_root}"
+            )
         for name in dataset_names:
             render_dir = render_output_root / _render_directory_name(name)
-            if render_dir.exists():
+            if render_dir.exists() and (
+                not render_dir.is_dir() or render_dir.is_symlink()
+            ):
                 raise FileExistsError(
-                    "render output directory already exists; choose a new "
-                    f"--render-output-dir or remove it explicitly: {render_dir}"
+                    "refusing to replace a render output path that is not a real "
+                    f"directory: {render_dir}"
                 )
             render_directories[name] = render_dir
 
@@ -198,6 +208,8 @@ def evaluate(args) -> dict:
                 max_predictions=render_max_predictions,
                 batch_size=min(args.batch_size, render_count),
                 amp=args.amp,
+                draw_endpoints=render_endpoints,
+                replace_existing=True,
             )
         annotation = dataset_root / "annotations" / "lines_val2017.json"
         results[name] = {
@@ -230,6 +242,7 @@ def evaluate(args) -> dict:
             "score_threshold": render_score_threshold,
             "max_predictions": render_max_predictions,
             "candidate_limit": render_candidate_limit,
+            "endpoints": render_endpoints,
             "output_root": (
                 str(render_output_root.resolve())
                 if render_output_root is not None
@@ -293,6 +306,11 @@ def main() -> None:
             "maximum predictions drawn per image; defaults to min(100, num-select); "
             "render-only permits values up to num_queries"
         ),
+    )
+    parser.add_argument(
+        "--render-endpoints",
+        action="store_true",
+        help="draw a filled point at both endpoints of every rendered line",
     )
     parser.add_argument(
         "--render-output-dir",

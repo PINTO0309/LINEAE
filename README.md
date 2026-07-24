@@ -635,7 +635,7 @@ Online-teacher training cost can be measured without starting a full run using `
 
 ## Measurement and deployment
 
-`tools/evaluate_checkpoint.py` evaluates one checkpoint on any repeatable set of validation roots and can optionally render a fixed prefix from each dataset. The left half of every PNG shows GT in green; the right half shows score-filtered predictions in red. Rendering is disabled by default. `--render-count N` enables it, `--render-score-threshold` controls the minimum class-0 score, and `--render-max-predictions` caps the number of drawn lines after score sorting. Dataset names become output subdirectory names, so the following command writes metrics to one JSON report and ten PNG comparisons each under `..._renders/wireframe/` and `..._renders/york/`:
+`tools/evaluate_checkpoint.py` evaluates one checkpoint on any repeatable set of validation roots and can optionally render a fixed prefix from each dataset. The left half of every PNG shows GT in green; the right half shows score-filtered predictions in red. Rendering is disabled by default. `--render-count N` enables it, `--render-score-threshold` controls the minimum class-0 score, and `--render-max-predictions` caps the number of drawn lines after score sorting. Add `--render-endpoints` to mark the start of every GT and prediction line in blue and the end in yellow. Dataset names become output subdirectory names, so the following command writes metrics to one JSON report and ten PNG comparisons each under `..._renders/wireframe/` and `..._renders/york/`:
 
 ```bash
 uv run --locked python tools/evaluate_checkpoint.py \
@@ -650,11 +650,12 @@ uv run --locked python tools/evaluate_checkpoint.py \
 --render-count 10 \
 --render-score-threshold 0.3 \
 --render-max-predictions 100 \
+--render-endpoints \
 --render-output-dir outputs/evaluations/lineae_3xl-seed42_renders \
 --output outputs/evaluations/lineae_3xl-seed42.json
 ```
 
-If `--render-output-dir` is omitted, the default is `<output-stem>_renders` beside the JSON report. Existing per-dataset render directories are never replaced implicitly; choose a new render root or remove the old directory explicitly before rerunning. The JSON report records the effective render settings and each dataset's absolute render directory.
+If `--render-output-dir` is omitted, the default is `<output-stem>_renders` beside the JSON report. Existing per-dataset render directories are atomically replaced when the command is rerun; unrelated sibling directories remain untouched. Files and symbolic links are never accepted as replacement targets. The JSON report records the effective render settings and each dataset's absolute render directory.
 
 For a visual check without full-dataset sAP evaluation, add `--render-only`. This path does not construct the criterion or evaluation DataLoader, does not hash the checkpoint, and runs inference only on the first `--render-count` samples of each requested dataset. `--output` is optional and, when supplied, receives a diagnostic `lineae_render_v1` manifest rather than a qualification-compatible evaluation report. Render-only permits `--render-max-predictions` up to the model's `num_queries`, independently of the configured deployment `num_select`:
 

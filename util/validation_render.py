@@ -19,6 +19,10 @@ _HEADER_HEIGHT = 32
 # GT RGB(64, 255, 96) and prediction RGB(255, 64, 64).
 _GT_COLOR = (96, 255, 64)
 _PREDICTION_COLOR = (64, 64, 255)
+# Endpoint markers use the same direction colors for GT and predictions:
+# start RGB(0, 128, 255), end RGB(255, 220, 0).
+_START_ENDPOINT_COLOR = (255, 128, 0)
+_END_ENDPOINT_COLOR = (0, 220, 255)
 
 
 def validate_validation_render_options(args) -> None:
@@ -107,6 +111,7 @@ def _render_comparison(
     image_std: Sequence[float],
     score_threshold: float,
     max_predictions: int,
+    draw_endpoints: bool = False,
 ) -> np.ndarray:
     base = _tensor_to_image(image, image_mean, image_std)
     height, width = base.shape[:2]
@@ -114,18 +119,47 @@ def _render_comparison(
     canvas[_HEADER_HEIGHT:, :width] = base
     canvas[_HEADER_HEIGHT:, width:] = base
     line_width = max(1, round(min(width, height) / 160))
+    endpoint_radius = max(2, round(line_width * 1.5))
+
+    def draw_line_with_optional_endpoints(
+        start: tuple[int, int],
+        end: tuple[int, int],
+        color: tuple[int, int, int],
+    ) -> None:
+        cv2.line(
+            canvas,
+            start,
+            end,
+            color,
+            thickness=line_width,
+            lineType=cv2.LINE_8,
+        )
+        if draw_endpoints:
+            cv2.circle(
+                canvas,
+                start,
+                endpoint_radius,
+                _START_ENDPOINT_COLOR,
+                thickness=-1,
+                lineType=cv2.LINE_8,
+            )
+            cv2.circle(
+                canvas,
+                end,
+                endpoint_radius,
+                _END_ENDPOINT_COLOR,
+                thickness=-1,
+                lineType=cv2.LINE_8,
+            )
 
     scale = target["lines"].new_tensor([width, height, width, height])
     ground_truth = (target["lines"] * scale).detach().cpu()
     for line in ground_truth:
         coordinates = _line_coordinates(line.tolist(), width, height)
-        cv2.line(
-            canvas,
+        draw_line_with_optional_endpoints(
             (coordinates[0], coordinates[1] + _HEADER_HEIGHT),
             (coordinates[2], coordinates[3] + _HEADER_HEIGHT),
             _GT_COLOR,
-            thickness=line_width,
-            lineType=cv2.LINE_8,
         )
 
     predicted_lines, predicted_scores = filter_render_predictions(
@@ -136,13 +170,10 @@ def _render_comparison(
     )
     for line in predicted_lines:
         coordinates = _line_coordinates(line.tolist(), width, height)
-        cv2.line(
-            canvas,
+        draw_line_with_optional_endpoints(
             (coordinates[0] + width, coordinates[1] + _HEADER_HEIGHT),
             (coordinates[2] + width, coordinates[3] + _HEADER_HEIGHT),
             _PREDICTION_COLOR,
-            thickness=line_width,
-            lineType=cv2.LINE_8,
         )
 
     cv2.putText(
@@ -219,6 +250,7 @@ def _save_validation_renders(
     batch_size: int,
     amp: bool,
     replace_existing: bool,
+    draw_endpoints: bool = False,
 ) -> Path | None:
     """Render a fixed validation prefix atomically into one directory."""
     count = int(count)
@@ -285,6 +317,7 @@ def _save_validation_renders(
                     image_std=image_std,
                     score_threshold=score_threshold,
                     max_predictions=max_predictions,
+                    draw_endpoints=draw_endpoints,
                 )
                 image_id = int(target["image_id"].flatten()[0].item())
                 destination = temporary_dir / f"{saved_count:02d}_image_{image_id}.png"
@@ -325,8 +358,10 @@ def save_validation_renders(
     max_predictions: int,
     batch_size: int,
     amp: bool,
+    draw_endpoints: bool = False,
+    replace_existing: bool = False,
 ) -> Path | None:
-    """Render an evaluated checkpoint without replacing an existing directory."""
+    """Render an evaluated checkpoint, optionally replacing its directory."""
     return _save_validation_renders(
         model=model,
         postprocessor=postprocessor,
@@ -340,7 +375,8 @@ def save_validation_renders(
         max_predictions=max_predictions,
         batch_size=batch_size,
         amp=amp,
-        replace_existing=False,
+        replace_existing=replace_existing,
+        draw_endpoints=draw_endpoints,
     )
 
 
@@ -360,6 +396,7 @@ def save_best_validation_renders(
     max_predictions: int,
     batch_size: int,
     amp: bool,
+    draw_endpoints: bool = False,
 ) -> Path | None:
     """Render a completed best epoch atomically, then apply retention."""
     render_root = Path(output_dir) / "validation_renders"
@@ -378,6 +415,7 @@ def save_best_validation_renders(
         batch_size=batch_size,
         amp=amp,
         replace_existing=True,
+        draw_endpoints=draw_endpoints,
     )
     if rendered_dir is not None:
         prune_best_validation_renders(render_root, keep_best)

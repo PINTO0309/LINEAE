@@ -123,6 +123,7 @@ def test_evaluate_checkpoint_optionally_renders_each_dataset(tmp_path, monkeypat
         render_count=2,
         render_score_threshold=0.5,
         render_max_predictions=2,
+        render_endpoints=True,
         render_output_dir=render_root,
         output=output,
     )
@@ -132,20 +133,32 @@ def test_evaluate_checkpoint_optionally_renders_each_dataset(tmp_path, monkeypat
     render_dir = render_root / "wireframe"
     images = sorted(render_dir.glob("*.png"))
     assert len(images) == 2
-    assert cv2.imread(str(images[0]), cv2.IMREAD_COLOR).shape == (64, 64, 3)
+    rendered = cv2.imread(str(images[0]), cv2.IMREAD_COLOR)
+    assert rendered.shape == (64, 64, 3)
+    assert tuple(rendered[42, 0]) == (255, 128, 0)
+    assert tuple(rendered[42, 31]) == (0, 220, 255)
+    assert tuple(rendered[56, 33]) == (255, 128, 0)
+    assert tuple(rendered[58, 63]) == (0, 220, 255)
     assert report["rendering"] == {
         "enabled": True,
         "count": 2,
         "score_threshold": 0.5,
         "max_predictions": 2,
         "candidate_limit": 4,
+        "endpoints": True,
         "output_root": str(render_root.resolve()),
     }
     assert report["datasets"]["wireframe"]["render_dir"] == str(render_dir.resolve())
     assert output.is_file()
 
-    with pytest.raises(FileExistsError, match="render output directory already exists"):
-        evaluate_checkpoint.evaluate(args)
+    stale_render = render_dir / "stale.png"
+    stale_render.write_bytes(b"stale")
+    repeated_report = evaluate_checkpoint.evaluate(args)
+    assert repeated_report["datasets"]["wireframe"]["render_dir"] == str(
+        render_dir.resolve()
+    )
+    assert len(list(render_dir.glob("*.png"))) == 2
+    assert not stale_render.exists()
 
     render_only_root = tmp_path / "render-only"
     config.num_select = 2
