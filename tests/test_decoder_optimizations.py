@@ -7,12 +7,21 @@ import torch.nn.functional as F
 from torch import nn
 
 from main import create
-from models.lineae.attention_mechanism import ms_deform_attn_core_pytorchv2
+from models.lineae.attention_mechanism import (
+    ms_deform_attn_core_batch_first,
+    ms_deform_attn_core_pytorchv2,
+    packed_batch_first_self_attention,
+)
 from models.lineae.decoder import (
     DeformableTransformerDecoderLayer,
+    Integral,
+    LINEATransformer,
     TransformerDecoder,
+    _distance2bbox_batch_first,
     _topk_line_proposals,
 )
+from models.lineae.hybrid_encoder import TransformerEncoderLayer
+from models.lineae.linea_utils import distance2bbox
 from util.slconfig import SLConfig
 
 
@@ -59,7 +68,8 @@ def test_encoder_topk_uses_the_evaluator_line_class_only():
 
     selected = _topk_line_proposals(logits, topk=2)
 
-    assert selected.tolist() == [[1, 2]]
+    assert selected.shape == (1, 2, 1)
+    assert selected[..., 0].tolist() == [[1, 2]]
 
 
 @pytest.mark.parametrize(
@@ -154,6 +164,76 @@ def test_no_grad_line_attention_inplace_weighting_is_bit_exact_and_keeps_gradien
         atol=1e-5,
     )
     torch.testing.assert_close(actual_weights.grad, expected_weights.grad, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("batch", [1, 3])
+@pytest.mark.parametrize(
+    "device",
+    [
+        "cpu",
+        pytest.param(
+            "cuda",
+            marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable"),
+        ),
+    ],
+)
+def test_batch_first_line_attention_keeps_batch_axis_and_matches_legacy(batch, device):
+    torch.manual_seed(73)
+    queries, heads, channels = 5, 2, 4
+    shapes = [(4, 4), (2, 2), (1, 1)]
+    points = [2, 1, 1]
+    explicit_values = [
+        torch.randn(batch, heads, channels, height * width, device=device)
+        for height, width in shapes
+    ]
+    flattened_values = [value.flatten(0, 1).clone() for value in explicit_values]
+    locations = torch.rand(batch, queries, heads, sum(points), 2, device=device)
+    weights = torch.rand(batch, queries, heads, sum(points), device=device)
+
+    with torch.inference_mode():
+        expected = ms_deform_attn_core_pytorchv2(
+            flattened_values,
+            shapes,
+            locations,
+            weights,
+            points,
+        )
+        actual = ms_deform_attn_core_batch_first(
+            explicit_values,
+            shapes,
+            locations,
+            weights,
+            points,
+        )
+
+    assert actual.shape == (batch, queries, heads * channels)
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("batch", [1, 3])
+@pytest.mark.parametrize(
+    "device",
+    [
+        "cpu",
+        pytest.param(
+            "cuda",
+            marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable"),
+        ),
+    ],
+)
+def test_packed_batch_first_attention_matches_multihead_attention(batch, device):
+    torch.manual_seed(79)
+    attention = nn.MultiheadAttention(32, 4, dropout=0.0, batch_first=True).to(device)
+    attention.eval()
+    value = torch.randn(batch, 11, 32, device=device)
+    position = torch.randn_like(value)
+    query = value + position
+
+    with torch.inference_mode():
+        expected = attention(query, query, value, need_weights=False)[0]
+        actual = packed_batch_first_self_attention(attention, query, value)
+
+    torch.testing.assert_close(actual, expected, rtol=1e-5, atol=2e-6)
 
 
 class _ZeroCrossAttention(nn.Module):
@@ -289,6 +369,62 @@ def test_decoder_sine_frequency_cache_is_device_exact_and_not_checkpoint_state(d
     assert tuple(decoder.state_dict()) == state_keys
     decoder.to(device)
     assert decoder._sine_dim_t_cache is None
+
+
+@pytest.mark.parametrize("batch", [1, 3])
+def test_deploy_coordinate_math_is_batch_first_and_matches_legacy(batch):
+    torch.manual_seed(83)
+    queries = 7
+    decoder = TransformerDecoder(nn.Identity(), 0, d_model=32)
+    reference_points = torch.rand(batch, queries, 4)
+    expected_sine = _legacy_sine_embedding(reference_points, decoder.d_model)
+    decoder._deploy_batch_first = True
+    actual_sine = decoder.sine_embedding(reference_points, decoder.d_model)
+
+    integral = Integral(reg_max=16)
+    corners = torch.randn(batch, queries, 4 * 17)
+    project = torch.randn(17)
+    expected_distance = integral(corners, project)
+    actual_distance = integral.forward_batch_first(corners, project)
+    scale = torch.tensor([4.0])
+    expected_lines = distance2bbox(reference_points, expected_distance, scale)
+    actual_lines = _distance2bbox_batch_first(
+        reference_points,
+        actual_distance,
+        scale,
+    )
+
+    torch.testing.assert_close(actual_sine, expected_sine, rtol=0, atol=0)
+    torch.testing.assert_close(actual_distance, expected_distance, rtol=0, atol=0)
+    torch.testing.assert_close(actual_lines, expected_lines, rtol=0, atol=0)
+
+
+def test_deploy_layout_conversion_preserves_checkpoint_schema():
+    config = SLConfig.fromfile("configs/lineae/lineae_a.py")
+    config.pretrained = False
+    config.eval_spatial_size = (64, 64)
+    config.enforce_variant_input = False
+    config.num_queries = 20
+    config.num_select = 10
+    model, _ = create(config, "modelname")
+    checkpoint = model.state_dict()
+    state_keys = tuple(checkpoint)
+
+    optimized_types = (
+        DeformableTransformerDecoderLayer,
+        LINEATransformer,
+        TransformerDecoder,
+        TransformerEncoderLayer,
+    )
+    for module in model.modules():
+        if isinstance(module, optimized_types):
+            module.convert_to_deploy()
+
+    assert tuple(model.state_dict()) == state_keys
+    fresh_model, _ = create(config, "modelname")
+    incompatible = fresh_model.load_state_dict(model.state_dict(), strict=True)
+    assert incompatible.missing_keys == []
+    assert incompatible.unexpected_keys == []
 
 
 def test_expanded_decoder_broadcasts_match_repeated_values_and_gradients():

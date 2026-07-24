@@ -13,6 +13,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F 
 
+from .attention_mechanism import packed_batch_first_self_attention
 from .linea_utils import get_activation
 
 
@@ -262,6 +263,10 @@ class TransformerEncoderLayer(nn.Module):
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
         self.activation = get_activation(activation) 
+        self._deploy_packed_attention = False
+
+    def convert_to_deploy(self):
+        self._deploy_packed_attention = True
 
     @staticmethod
     def with_pos_embed(tensor, pos_embed):
@@ -276,12 +281,17 @@ class TransformerEncoderLayer(nn.Module):
         if self.normalize_before:
             src = self.norm1(src)
         q = k = self.with_pos_embed(src, pos_embed)
-        src = self.self_attn(q, k, 
-            value=src, 
-            attn_mask=src_mask,
-            key_padding_mask=src_key_padding_mask,
-            need_weights=False,
-        )[0]
+        if self._deploy_packed_attention:
+            if src_mask is not None or src_key_padding_mask is not None:
+                raise ValueError("deployment encoder attention does not accept masks")
+            src = packed_batch_first_self_attention(self.self_attn, q, src)
+        else:
+            src = self.self_attn(q, k,
+                value=src,
+                attn_mask=src_mask,
+                key_padding_mask=src_key_padding_mask,
+                need_weights=False,
+            )[0]
 
         src = residual + self.dropout1(src)
         if not self.normalize_before:

@@ -16,12 +16,27 @@ import torch.nn.functional as F
 import torch.nn.init as init 
 
 from .dn_components import prepare_for_cdn
-from .attention_mechanism import MSDeformAttn, MSDeformLineAttn
+from .attention_mechanism import (
+    MSDeformAttn,
+    MSDeformLineAttn,
+    packed_batch_first_self_attention,
+)
 from .linea_utils import weighting_function, distance2bbox, get_activation
 
 
 def _topk_line_proposals(logits: Tensor, topk: int) -> Tensor:
-    return torch.topk(logits[..., 0], topk, dim=1).indices
+    # Keep the class axis so the indices are immediately usable by the
+    # following feature/proposal gathers. In ONNX this replaces the redundant
+    # Gather -> TopK -> Unsqueeze sequence with Slice -> TopK.
+    return torch.topk(logits[..., :1], topk, dim=1).indices
+
+
+def _distance2bbox_batch_first(points, distance, reg_scale):
+    """Vectorized deployment equivalent of ``distance2bbox``."""
+    reg_scale = abs(reg_scale)
+    endpoint_span = torch.abs(points[..., :2] - points[..., 2:]) / reg_scale
+    endpoint_scale = torch.cat((endpoint_span, endpoint_span), dim=-1)
+    return points + (0.5 * reg_scale + distance) * endpoint_scale
 
 
 class MLP(nn.Module):
@@ -68,6 +83,10 @@ class DeformableTransformerDecoderLayer(nn.Module):
         self.linear2 = nn.Linear(d_ffn, d_model)
         self.dropout4 = nn.Dropout(dropout)
         self.norm3 = nn.LayerNorm(d_model)
+        self._deploy_batch_first = False
+
+    def convert_to_deploy(self):
+        self._deploy_batch_first = True
 
     def rm_self_attn_modules(self):
         self.self_attn = None
@@ -97,22 +116,36 @@ class DeformableTransformerDecoderLayer(nn.Module):
             ):
         # self attention
         q = k = self.with_pos_embed(tgt, tgt_query_pos)
-        tgt2 = self.self_attn(
-            q,
-            k,
-            tgt,
-            attn_mask=self_attn_mask,
-            need_weights=False,
-        )[0]
+        if self._deploy_batch_first:
+            if self_attn_mask is not None or tgt_key_padding_mask is not None:
+                raise ValueError("deployment self-attention does not accept masks")
+            tgt2 = packed_batch_first_self_attention(self.self_attn, q, tgt)
+        else:
+            tgt2 = self.self_attn(
+                q,
+                k,
+                tgt,
+                attn_mask=self_attn_mask,
+                need_weights=False,
+            )[0]
         tgt = tgt + self.dropout2(tgt2)
         tgt = self.norm2(tgt)
 
         # cross attention
-        tgt2 = self.cross_attn(self.with_pos_embed(tgt, tgt_query_pos).transpose(0, 1),
-                               tgt_reference_points.transpose(0, 1),
-                               memory,
-                               memory_spatial_shapes, 
-                               ).transpose(0, 1)
+        if self._deploy_batch_first:
+            tgt2 = self.cross_attn(
+                self.with_pos_embed(tgt, tgt_query_pos),
+                tgt_reference_points,
+                memory,
+                memory_spatial_shapes,
+            )
+        else:
+            tgt2 = self.cross_attn(
+                self.with_pos_embed(tgt, tgt_query_pos).transpose(0, 1),
+                tgt_reference_points.transpose(0, 1),
+                memory,
+                memory_spatial_shapes,
+            ).transpose(0, 1)
         tgt = tgt + self.dropout1(tgt2)
         tgt = self.norm1(tgt)
 
@@ -146,6 +179,10 @@ class Integral(nn.Module):
         x = F.softmax(x.reshape(-1, self.reg_max + 1), dim=1)
         x = F.linear(x, project.to(x.device)).reshape(-1, 4)
         return x.reshape(list(shape[:-1]) + [-1])
+
+    def forward_batch_first(self, x, project):
+        x = F.softmax(x.unflatten(-1, (4, self.reg_max + 1)), dim=-1)
+        return F.linear(x, project.to(device=x.device, dtype=x.dtype))
 
 
 class LQE(nn.Module):
@@ -220,6 +257,7 @@ class TransformerDecoder(nn.Module):
 
         # inference
         self.eval_idx = eval_idx
+        self._deploy_batch_first = False
 
     def _apply(self, fn, recurse=True):
         result = super()._apply(fn, recurse=recurse)
@@ -241,6 +279,8 @@ class TransformerDecoder(nn.Module):
         return dim_t
 
     def sine_embedding(self, tensor, hidden_dim):
+        if self._deploy_batch_first:
+            return self._sine_embedding_batch_first(tensor, hidden_dim)
         scale = 2 * math.pi
         dim_t = self._sine_dim_t(tensor, hidden_dim)
         x_embed = tensor[:, :, 0] * scale
@@ -261,8 +301,23 @@ class TransformerDecoder(nn.Module):
         pos = torch.cat((pos_y, pos_x, pos_w, pos_h), dim=2)
         return pos
 
+    def _sine_embedding_batch_first(self, tensor, hidden_dim):
+        scale = 2 * math.pi
+        dim_t = self._sine_dim_t(tensor, hidden_dim)
+        ordered = torch.cat(
+            (tensor[..., 1:2], tensor[..., 0:1], tensor[..., 2:]),
+            dim=-1,
+        )
+        angles = ordered.unsqueeze(-1) * scale / dim_t
+        use_sine = (
+            torch.arange(dim_t.numel(), device=tensor.device, dtype=torch.long) % 2
+            == 0
+        )
+        return torch.where(use_sine, angles.sin(), angles.cos()).flatten(2)
+
     def convert_to_deploy(self):
         self.project = weighting_function(self.reg_max, self.up, self.reg_scale, deploy=True)
+        self._deploy_batch_first = True
 
     def forward(self, 
     	tgt, 
@@ -283,6 +338,8 @@ class TransformerDecoder(nn.Module):
             - pos: hw, bs, d_model
             - refpoints_unsigmoid: nq, bs, 2/4
         """
+        if self._deploy_batch_first and self.training:
+            raise RuntimeError("the batch-first deployment decoder is inference-only")
         output = tgt
         output_detach = pred_corners_undetach = 0
 
@@ -321,13 +378,29 @@ class TransformerDecoder(nn.Module):
             )
 
             pred_corners = self.bbox_embed[layer_id](output + output_detach) + pred_corners_undetach
-            inter_ref_bbox = distance2bbox(ref_points_initial, self.integral(pred_corners, project), self.reg_scale) 
+            if self._deploy_batch_first:
+                distances = self.integral.forward_batch_first(pred_corners, project)
+                inter_ref_bbox = _distance2bbox_batch_first(
+                    ref_points_initial,
+                    distances,
+                    self.reg_scale,
+                )
+            else:
+                inter_ref_bbox = distance2bbox(
+                    ref_points_initial,
+                    self.integral(pred_corners, project),
+                    self.reg_scale,
+                )
 
             if self.training or layer_id == self.eval_idx:
-            	scores = self.class_embed[layer_id](output)
-            	scores = self.lqe_layers[layer_id](scores, pred_corners)
-            	dec_out_logits.append(scores)
-            	dec_out_bboxes.append(inter_ref_bbox)
+                scores = self.class_embed[layer_id](output)
+                scores = self.lqe_layers[layer_id](scores, pred_corners)
+                if self._deploy_batch_first:
+                    deploy_logits = scores
+                    deploy_bboxes = inter_ref_bbox
+                else:
+                    dec_out_logits.append(scores)
+                    dec_out_bboxes.append(inter_ref_bbox)
 
             pred_corners_undetach = pred_corners
             if self.training:
@@ -336,7 +409,8 @@ class TransformerDecoder(nn.Module):
             else:
             	ref_points_detach = inter_ref_bbox
             	output_detach = output
-
+        if self._deploy_batch_first:
+            return deploy_bboxes, deploy_logits
         return torch.stack(dec_out_bboxes).permute(0, 2, 1, 3), torch.stack(dec_out_logits).permute(0, 2, 1, 3), 
 
 class LINEATransformer(nn.Module):
@@ -411,6 +485,7 @@ class LINEATransformer(nn.Module):
                                         reg_max=reg_max, reg_scale=reg_scale)
         self._dynamic_anchor_cache = {}
         self._dynamic_anchor_cache_limit = 16
+        self._deploy_batch_first = False
 
         # for inference mode
         self.eval_spatial_size = eval_spatial_size
@@ -441,6 +516,9 @@ class LINEATransformer(nn.Module):
         for m in self.modules():
             if isinstance(m, MSDeformAttn): # or isinstance(m, MSDeformLineAttn):
                 m._reset_parameters()
+
+    def convert_to_deploy(self):
+        self._deploy_batch_first = True
 
     def generate_anchors(self, spatial_shapes):
         proposals = []
@@ -525,7 +603,7 @@ class LINEATransformer(nn.Module):
         topk_proposals = _topk_line_proposals(enc_outputs_class_unselected, topk)
 
         # gathering memory and proposals
-        topk_index = topk_proposals.unsqueeze(-1)
+        topk_index = topk_proposals
         selected_output_memory = torch.gather(
             output_memory,
             1,
@@ -543,7 +621,10 @@ class LINEATransformer(nn.Module):
         # top-K memory tensor as the encoder box head. Reusing it avoids a second
         # [B, num_queries, d_model] gather/allocation during every training step.
         tgt_undetach = selected_output_memory if self.training else None
-        tgt = self.tgt_embed.weight[:, None, :].expand(-1, bs, -1)  # nq, bs, d_model
+        if self._deploy_batch_first:
+            tgt = self.tgt_embed.weight[None, :, :].expand(bs, -1, -1)
+        else:
+            tgt = self.tgt_embed.weight[:, None, :].expand(-1, bs, -1)  # nq, bs, d_model
 
         # denoise (only for training)
         if self.training and targets is not None:
@@ -558,12 +639,19 @@ class LINEATransformer(nn.Module):
 
         # preprocess memory for MSDeformableLineAttention
         value = memory.unflatten(2, (self.n_heads, -1)) # (bs, \sum{hxw}, n_heads, d_model//n_heads)
-        value = value.permute(0, 2, 3, 1).flatten(0, 1).split(split_sizes, dim=-1)
+        value = value.permute(0, 2, 3, 1)
+        if not self._deploy_batch_first:
+            value = value.flatten(0, 1)
+        value = value.split(split_sizes, dim=-1)
         out_coords, out_class = self.decoder(
                 tgt=tgt, 
                 memory=value, #memory.transpose(0, 1), 
                 pos=None,
-                refpoints_unsigmoid=refpoint_embed.transpose(0, 1), 
+                refpoints_unsigmoid=(
+                    refpoint_embed
+                    if self._deploy_batch_first
+                    else refpoint_embed.transpose(0, 1)
+                ),
                 spatial_shapes=spatial_shapes,
                 tgt_mask=dn_attn_mask)
 
@@ -588,7 +676,10 @@ class LINEATransformer(nn.Module):
                 dn_out['aux_outputs'] = self._set_aux_loss(dn_out_class, dn_out_coords)
                 out['aux_denoise'] = dn_out
         else:
-            out = {'pred_logits': out_class[0], 'pred_lines': out_coords[0]}
+            if self._deploy_batch_first:
+                out = {'pred_logits': out_class, 'pred_lines': out_coords}
+            else:
+                out = {'pred_logits': out_class[0], 'pred_lines': out_coords[0]}
 
         out['dn_meta'] = dn_meta
 

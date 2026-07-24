@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import Counter
 from pathlib import Path
 
 import cv2
@@ -46,15 +47,58 @@ class ExportWrapper(nn.Module):
         )
 
 
+def resolve_export_num_select(num_queries: int, override: int | None = None) -> int:
+    """Default ONNX outputs to every query; an explicit CLI value filters them."""
+    return resolve_num_select(num_queries, num_queries, override)
+
+
+_LAYOUT_ONLY_OPS = frozenset(
+    {"Concat", "Identity", "Reshape", "Squeeze", "Transpose", "Unsqueeze"}
+)
+
+
+def find_redundant_decoder_selection_chains(graph: onnx.ModelProto) -> list[str]:
+    """Find legacy ``stack -> permute -> index`` decoder output selection.
+
+    A one-element ``torch.stack`` is exported as an Unsqueeze (and sometimes a
+    Concat), ``permute`` as Transpose, and ``[0]`` as Gather.  Walking only
+    layout operators avoids treating the encoder proposal gathers or the
+    public output TopK gather as this legacy decoder chain.
+    """
+    producers = {
+        output: node
+        for node in graph.graph.node
+        for output in node.output
+        if output
+    }
+
+    def layout_ancestors(value: str, visited: set[str]) -> set[str]:
+        producer = producers.get(value)
+        if producer is None or value in visited:
+            return set()
+        if producer.op_type not in _LAYOUT_ONLY_OPS:
+            return set()
+        visited.add(value)
+        operations = {producer.op_type}
+        for input_name in producer.input:
+            operations.update(layout_ancestors(input_name, visited))
+        return operations
+
+    redundant = []
+    for node in graph.graph.node:
+        if node.op_type != "Gather" or "/decoder/" not in node.name:
+            continue
+        operations = layout_ancestors(node.input[0], set())
+        if {"Unsqueeze", "Transpose"}.issubset(operations):
+            redundant.append(node.name)
+    return redundant
+
+
 def export_and_verify(args) -> dict:
     config = SLConfig.fromfile(args.config)
     validate_image_preprocess_schema(config.image_preprocess_schema)
     num_select_override = getattr(args, "num_select", None)
-    num_select = resolve_num_select(
-        config.num_select,
-        config.num_queries,
-        num_select_override,
-    )
+    num_select = resolve_export_num_select(config.num_queries, num_select_override)
     spatial_size = args.spatial_size
     if spatial_size is None:
         configured = config.eval_spatial_size
@@ -98,6 +142,26 @@ def export_and_verify(args) -> dict:
         onnx.checker.check_model(graph)
         onnx.save(graph, args.output)
         simplified = True
+    nonstandard_domains = sorted(
+        {node.domain for node in graph.graph.node if node.domain not in ("", "ai.onnx")}
+    )
+    if nonstandard_domains:
+        raise RuntimeError(
+            f"exported graph contains non-standard ONNX domains: {nonstandard_domains}"
+        )
+    redundant_selection_chains = find_redundant_decoder_selection_chains(graph)
+    if redundant_selection_chains:
+        raise RuntimeError(
+            "exported graph contains legacy decoder stack/permute/gather output "
+            f"selection: {redundant_selection_chains}"
+        )
+    node_counts = Counter(node.op_type for node in graph.graph.node)
+    graph_nodes = {
+        "total": len(graph.graph.node),
+        "Transpose": node_counts["Transpose"],
+        "Gather": node_counts["Gather"],
+        "Unsqueeze": node_counts["Unsqueeze"],
+    }
     result = {
         "format": "lineae_onnx_export_v3",
         "config": str(Path(args.config).resolve()),
@@ -118,9 +182,12 @@ def export_and_verify(args) -> dict:
         "output_selection": (
             "class0_topk" if wrapper.uses_output_topk else "all_queries_passthrough"
         ),
+        "graph_nodes": graph_nodes,
         "image_preprocess_schema": config.image_preprocess_schema,
         "opencv_version": cv2.__version__,
-        "num_select_source": "cli" if num_select_override is not None else "config",
+        "num_select_source": (
+            "cli" if num_select_override is not None else "variant_num_queries"
+        ),
         "output_shapes": {
             "pred_logits": list(reference_logits.shape),
             "pred_lines": list(reference_lines.shape),
@@ -149,9 +216,9 @@ def main() -> None:
         dest="num_select",
         type=int,
         help=(
-            "number of line queries in the ONNX outputs; defaults to "
-            "config.num_select, and output TopK selection is omitted when this "
-            "equals config.num_queries"
+            "optionally filter the ONNX outputs to this many top-scoring line "
+            "queries; when omitted, all config.num_queries for the selected "
+            "variant are exported, and output TopK selection is omitted"
         ),
     )
     parser.add_argument("--opset", type=int, default=17)
@@ -167,6 +234,7 @@ def main() -> None:
     print(f"Input shape: {result['input_shape']}")
     print(f"Output shapes: {result['output_shapes']}")
     print(f"Output selection: {result['output_selection']}")
+    print(f"Graph nodes: {result['graph_nodes']}")
     print(f"ONNX SHA-256: {result['onnx_sha256']}")
     if args.report is not None:
         print(f"Export report: {args.report.resolve()}")

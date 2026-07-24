@@ -7,6 +7,50 @@ from torch.nn.init import xavier_uniform_, constant_
 import math
 import warnings
 
+
+def packed_batch_first_self_attention(attention, query, value):
+    """Run inference-only self-attention without sequence-first transposes.
+
+    ``query`` contains the positional embedding while ``value`` is the decoder
+    state.  Reusing the packed ``nn.MultiheadAttention`` parameters preserves
+    the checkpoint schema, but exposes a substantially cleaner batch-first
+    graph to the ONNX exporter.
+    """
+    embed_dim = attention.embed_dim
+    num_heads = attention.num_heads
+    head_dim = embed_dim // num_heads
+    in_proj_bias = attention.in_proj_bias
+    qk = F.linear(
+        query,
+        attention.in_proj_weight[: 2 * embed_dim],
+        None if in_proj_bias is None else in_proj_bias[: 2 * embed_dim],
+    )
+    projected_value = F.linear(
+        value,
+        attention.in_proj_weight[2 * embed_dim :],
+        None if in_proj_bias is None else in_proj_bias[2 * embed_dim :],
+    )
+
+    batch_size, num_queries, _ = query.shape
+    qk = qk.reshape(batch_size, num_queries, 2, num_heads, head_dim)
+    qk = qk.permute(2, 0, 3, 1, 4)
+    projected_query, projected_key = qk.unbind(0)
+    projected_value = projected_value.reshape(
+        batch_size,
+        num_queries,
+        num_heads,
+        head_dim,
+    ).transpose(1, 2)
+    output = F.scaled_dot_product_attention(
+        projected_query,
+        projected_key,
+        projected_value,
+        dropout_p=0.0,
+    )
+    output = output.transpose(1, 2).reshape(batch_size, num_queries, embed_dim)
+    return F.linear(output, attention.out_proj.weight, attention.out_proj.bias)
+
+
 def _is_power_of_2(n):
     if (not isinstance(n, int)) or (n < 0):
         raise ValueError("invalid input for _is_power_of_2: {} (type: {})".format(n, type(n)))
@@ -68,6 +112,55 @@ def ms_deform_attn_core_pytorchv2(value, value_spatial_shapes, sampling_location
         weighted_values = sampled_values
     output = weighted_values.sum(-1).view(N_, M_*D_, Lq_)
     return output.transpose(1, 2).contiguous()
+
+
+def ms_deform_attn_core_batch_first(
+    value,
+    value_spatial_shapes,
+    sampling_locations,
+    attention_weights,
+    num_points_list,
+):
+    """Deployment core that keeps batch and attention-head axes explicit."""
+    batch_size, num_heads, channels, _ = value[0].shape
+    location_batch, num_queries, location_heads, _, _ = sampling_locations.shape
+    exporting = torch.jit.is_tracing() or torch.onnx.is_in_onnx_export()
+    if not exporting and (
+        location_batch != batch_size or location_heads != num_heads
+    ):
+        raise ValueError("line attention batch/head dimensions do not match")
+
+    sampling_grids = (2 * sampling_locations - 1).permute(0, 2, 1, 3, 4)
+    sampling_locations_list = sampling_grids.split(num_points_list, dim=-2)
+
+    sampling_value_list = []
+    for level, (height, width) in enumerate(value_spatial_shapes):
+        value_level = value[level].unflatten(3, (height, width)).flatten(0, 1)
+        sampling_grid_level = sampling_locations_list[level].flatten(0, 1)
+        sampled = F.grid_sample(
+            value_level,
+            sampling_grid_level,
+            mode="bilinear",
+            padding_mode="zeros",
+            align_corners=False,
+        )
+        sampling_value_list.append(
+            sampled.unflatten(0, (batch_size, num_heads))
+        )
+
+    weights = attention_weights.permute(0, 2, 1, 3).unsqueeze(2)
+    sampled_values = torch.cat(sampling_value_list, dim=-1)
+    if torch.is_grad_enabled():
+        weighted_values = sampled_values * weights
+    else:
+        sampled_values.mul_(weights)
+        weighted_values = sampled_values
+    output = weighted_values.sum(-1)
+    return output.permute(0, 3, 1, 2).reshape(
+        batch_size,
+        num_queries,
+        num_heads * channels,
+    ).contiguous()
 
 
 class MSDeformAttn(nn.Module):
@@ -228,13 +321,22 @@ class MSDeformLineAttn(nn.Module):
 
         sampling_locations = center + sampling_ratios * num_points_scale * vector * 0.5
 
-        output = ms_deform_attn_core_pytorchv2(
-            value, 
-            value_spatial_shapes, 
-            sampling_locations, 
-            attention_weights, 
-            self.num_points_list
-        )
+        if value[0].ndim == 4:
+            output = ms_deform_attn_core_batch_first(
+                value,
+                value_spatial_shapes,
+                sampling_locations,
+                attention_weights,
+                self.num_points_list,
+            )
+        else:
+            output = ms_deform_attn_core_pytorchv2(
+                value,
+                value_spatial_shapes,
+                sampling_locations,
+                attention_weights,
+                self.num_points_list,
+            )
         return output
 
 

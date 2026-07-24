@@ -21,10 +21,13 @@ def select_top_line_predictions(logits, lines, num_select):
             )
         if num_select == logits.shape[1]:
             return logits, lines
-    indices = torch.topk(logits[..., 0], num_select, dim=1, sorted=True).indices
+    # Keep the class axis so TopK already returns [B, K, 1] indices.  Besides
+    # saving an eager-mode unsqueeze, this exports as one Slice feeding TopK
+    # instead of the redundant Gather -> TopK -> Unsqueeze sequence.
+    indices = torch.topk(logits[..., :1], num_select, dim=1, sorted=True).indices
     return (
-        torch.gather(logits, 1, indices.unsqueeze(-1).expand(-1, -1, logits.shape[-1])),
-        torch.gather(lines, 1, indices.unsqueeze(-1).expand(-1, -1, 4)),
+        torch.gather(logits, 1, indices.expand(-1, -1, logits.shape[-1])),
+        torch.gather(lines, 1, indices.expand(-1, -1, 4)),
     )
 
 

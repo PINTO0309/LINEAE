@@ -1,3 +1,4 @@
+from collections import Counter
 from pathlib import Path
 
 import onnx
@@ -8,7 +9,11 @@ import torch
 
 from main import create
 from tools.deployment_parity import compare_line_sets
-from tools.export_onnx import ExportWrapper
+from tools.export_onnx import (
+    ExportWrapper,
+    find_redundant_decoder_selection_chains,
+    resolve_export_num_select,
+)
 from util.deployment import resolve_num_select
 from util.onnx_runtime import create_ort_session
 from util.slconfig import SLConfig
@@ -40,6 +45,35 @@ def test_export_tool_does_not_run_onnx_runtime_parity():
     assert "if args.report is not None:" in source
 
 
+def test_legacy_decoder_stack_permute_gather_chain_is_detected():
+    nodes = [
+        onnx.helper.make_node(
+            "Unsqueeze",
+            ["decoder_output", "axes"],
+            ["stacked"],
+            name="/model/decoder/decoder/Unsqueeze_35",
+        ),
+        onnx.helper.make_node(
+            "Transpose",
+            ["stacked"],
+            ["permuted"],
+            name="/model/decoder/decoder/Transpose_1",
+        ),
+        onnx.helper.make_node(
+            "Gather",
+            ["permuted", "index"],
+            ["selected"],
+            name="/model/decoder/Gather_10",
+        ),
+    ]
+    graph = onnx.helper.make_graph(nodes, "legacy-selection", [], [])
+    model = onnx.helper.make_model(graph)
+
+    assert find_redundant_decoder_selection_chains(model) == [
+        "/model/decoder/Gather_10"
+    ]
+
+
 def test_deployment_num_select_accepts_cli_override_and_validates_query_count():
     assert resolve_num_select(300, 1100) == 300
     assert resolve_num_select(300, 1100, 500) == 500
@@ -47,6 +81,13 @@ def test_deployment_num_select_accepts_cli_override_and_validates_query_count():
         resolve_num_select(300, 1100, 0)
     with pytest.raises(ValueError, match="num_select must be in"):
         resolve_num_select(300, 1100, 1101)
+
+
+def test_onnx_export_defaults_to_variant_queries_and_cli_override_filters():
+    assert resolve_export_num_select(600) == 600
+    assert resolve_export_num_select(600, 300) == 300
+    with pytest.raises(ValueError, match="num_select must be in"):
+        resolve_export_num_select(600, 601)
 
 
 @pytest.mark.parametrize(
@@ -87,6 +128,19 @@ def test_export_wrapper_omits_output_topk_when_all_queries_are_selected(
     output_topk_nodes = [node for node in graph.graph.node if node.op_type == "TopK"]
     assert wrapper.uses_output_topk is expected_output_topk
     assert bool(output_topk_nodes) is expected_output_topk
+    if expected_output_topk:
+        producers = {
+            output: node for node in graph.graph.node for output in node.output
+        }
+        consumers = {}
+        for node in graph.graph.node:
+            for input_name in node.input:
+                consumers.setdefault(input_name, []).append(node)
+        output_topk = output_topk_nodes[0]
+        assert producers[output_topk.input[0]].op_type == "Slice"
+        assert {
+            node.op_type for node in consumers[output_topk.output[1]]
+        } == {"Expand"}
     assert logits.shape == (1, num_select, 2)
     assert lines.shape == (1, num_select, 4)
 
@@ -158,3 +212,47 @@ def test_representative_full_models_simplify_and_match_pinned_onnx_runtime(
     assert expected_lines.shape == actual_lines.shape == (1, 10, 4)
     assert parity["parity"] == {"pred_logits": True, "pred_lines": True}
     assert output_path.stat().st_size > 0
+
+    if variant == "A":
+        counts = Counter(node.op_type for node in simplified_graph.graph.node)
+        domains = {node.domain or "ai.onnx" for node in simplified_graph.graph.node}
+        inferred = onnx.shape_inference.infer_shapes(simplified_graph)
+        decoder_shapes = []
+        for value in inferred.graph.value_info:
+            if not value.name.startswith("/model/decoder/"):
+                continue
+            decoder_shapes.append(tuple(
+                dimension.dim_value or dimension.dim_param
+                for dimension in value.type.tensor_type.shape.dim
+            ))
+
+        assert len(simplified_graph.graph.node) < 724
+        assert counts["Transpose"] <= 24
+        assert counts["Gather"] <= 2
+        assert counts["Unsqueeze"] <= 8
+        assert domains == {"ai.onnx"}
+        assert not any(shape[:2] == (config.num_queries, 1) for shape in decoder_shapes)
+        assert find_redundant_decoder_selection_chains(simplified_graph) == []
+        node_names = {node.name for node in simplified_graph.graph.node}
+        assert "/Gather" not in node_names
+        assert "/Unsqueeze" not in node_names
+        assert "/model/decoder/Gather_7" not in node_names
+        assert "/model/decoder/Unsqueeze_1" not in node_names
+        producers = {
+            output: node
+            for node in simplified_graph.graph.node
+            for output in node.output
+        }
+        consumers = {}
+        for node in simplified_graph.graph.node:
+            for input_name in node.input:
+                consumers.setdefault(input_name, []).append(node)
+        proposal_topk = next(
+            node
+            for node in simplified_graph.graph.node
+            if node.name == "/model/decoder/TopK"
+        )
+        assert producers[proposal_topk.input[0]].op_type == "Slice"
+        assert {
+            node.op_type for node in consumers[proposal_topk.output[1]]
+        } == {"Expand"}
