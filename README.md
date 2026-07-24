@@ -26,10 +26,10 @@ The following exact counts are produced from each committed default config with 
 
 | Var | Backbone<br>(M) | Head<br>(M) | Total<br>(M) | GFLOPs | WF<br>AP<sup>5</sup> | 　<br>AP<sup>10</sup> | 　<br>AP<sup>15</sup> | YU<br>AP<sup>5</sup> | 　<br>AP<sup>10</sup> | 　<br>AP<sup>15</sup> |
 | :-----: | -----------: | -----------------: | --------: | -----: | -------------: | --------------: | --------------: | -------------: | --------------: | --------------: |
-| LINEA-N |          1.8 |                2.0 |       3.9 |   11.5 |58.7|65.0|67.9|27.3|30.5|32.5|
-| LINEA-S |          2.2 |                6.2 |       8.4 |   29.4 |58.4|64.7|67.6|28.9|32.6|34.8|
-| LINEA-M |          6.0 |                7.3 |      13.3 |   43.4 |59.5|66.3|69.1|30.3|34.5|36.7|
-| LINEA-L |          13.5 |              11.5 |      25.0 |   81.5 |61.0|67.9|70.8|30.9|34.9|37.3|
+| [LINEA-N](https://github.com/SebastianJanampa/LINEA) |          1.8 |                2.0 |       3.9 |   11.5 |58.7|65.0|67.9|27.3|30.5|32.5|
+| [LINEA-S](https://github.com/SebastianJanampa/LINEA) |          2.2 |                6.2 |       8.4 |   29.4 |58.4|64.7|67.6|28.9|32.6|34.8|
+| [LINEA-M](https://github.com/SebastianJanampa/LINEA) |          6.0 |                7.3 |      13.3 |   43.4 |59.5|66.3|69.1|30.3|34.5|36.7|
+| [LINEA-L](https://github.com/SebastianJanampa/LINEA) |          13.5 |              11.5 |      25.0 |   81.5 |61.0|67.9|70.8|30.9|34.9|37.3|
 | A       |          0.3 |                1.6 |       1.9 |    2.5 |||||||
 | F       |          0.7 |                1.9 |       2.6 |    4.7 |||||||
 | P       |          1.0 |                2.0 |       3.0 |   10.8 |||||||
