@@ -23,7 +23,7 @@ import onnxruntime as ort
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_MODEL_PATH = PROJECT_ROOT / "onnx" / "lineae_xl.onnx"
 DEFAULT_OUTPUT_DIRECTORY = PROJECT_ROOT / "output" / "demo_lineae"
-DEFAULT_SCORE_THRESHOLD = 0.4
+DEFAULT_SCORE_THRESHOLD = 0.3
 DEFAULT_MAX_LINES = 100
 DEFAULT_VIDEO_FPS = 30.0
 IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".webp"}

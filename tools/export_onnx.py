@@ -25,13 +25,22 @@ from util.slconfig import SLConfig
 
 
 class ExportWrapper(nn.Module):
-    def __init__(self, model: nn.Module, num_select: int):
+    def __init__(self, model: nn.Module, num_select: int, num_queries: int):
         super().__init__()
         self.model = model.deploy()
         self.num_select = int(num_select)
+        self.num_queries = int(num_queries)
+        if not 0 < self.num_select <= self.num_queries:
+            raise ValueError(
+                "num_select must be in "
+                f"[1, num_queries={self.num_queries}], got {self.num_select}"
+            )
+        self.uses_output_topk = self.num_select < self.num_queries
 
     def forward(self, images):
         outputs = self.model(images)
+        if not self.uses_output_topk:
+            return outputs["pred_logits"], outputs["pred_lines"]
         return select_top_line_predictions(
             outputs["pred_logits"], outputs["pred_lines"], self.num_select
         )
@@ -62,7 +71,7 @@ def export_and_verify(args) -> dict:
         validate_checkpoint_image_preprocess(checkpoint)
         model.load_state_dict(unwrap_state_dict(checkpoint), strict=True)
     model.eval()
-    wrapper = ExportWrapper(model, num_select).eval()
+    wrapper = ExportWrapper(model, num_select, config.num_queries).eval()
     generator = torch.Generator().manual_seed(args.seed)
     images = torch.randn(1, 3, spatial_size, spatial_size, generator=generator)
 
@@ -104,7 +113,11 @@ def export_and_verify(args) -> dict:
         "seed": args.seed,
         "input_shape": list(images.shape),
         "num_select": num_select,
+        "num_queries": int(config.num_queries),
         "configured_num_select": int(config.num_select),
+        "output_selection": (
+            "class0_topk" if wrapper.uses_output_topk else "all_queries_passthrough"
+        ),
         "image_preprocess_schema": config.image_preprocess_schema,
         "opencv_version": cv2.__version__,
         "num_select_source": "cli" if num_select_override is not None else "config",
@@ -113,8 +126,9 @@ def export_and_verify(args) -> dict:
             "pred_lines": list(reference_lines.shape),
         },
     }
-    report_path = args.report or args.output.with_suffix(".export.json")
-    report_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    if args.report is not None:
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     return result
 
 
@@ -123,14 +137,22 @@ def main() -> None:
     parser.add_argument("-c", "--config", required=True)
     parser.add_argument("--checkpoint")
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--report", type=Path)
+    parser.add_argument(
+        "--report",
+        type=Path,
+        help="optional JSON report path; no report is written by default",
+    )
     parser.add_argument("--spatial-size", type=int)
     parser.add_argument(
         "--num-select",
         "--topk",
         dest="num_select",
         type=int,
-        help="number of top-scoring line queries embedded in the ONNX outputs; defaults to config.num_select",
+        help=(
+            "number of line queries in the ONNX outputs; defaults to "
+            "config.num_select, and output TopK selection is omitted when this "
+            "equals config.num_queries"
+        ),
     )
     parser.add_argument("--opset", type=int, default=17)
     parser.add_argument("--seed", type=int, default=0)
@@ -140,7 +162,14 @@ def main() -> None:
         help="skip graph simplification; ONNX checker validation is still required",
     )
     args = parser.parse_args()
-    print(json.dumps(export_and_verify(args), indent=2))
+    result = export_and_verify(args)
+    print(f"Exported ONNX: {result['onnx']}")
+    print(f"Input shape: {result['input_shape']}")
+    print(f"Output shapes: {result['output_shapes']}")
+    print(f"Output selection: {result['output_selection']}")
+    print(f"ONNX SHA-256: {result['onnx_sha256']}")
+    if args.report is not None:
+        print(f"Export report: {args.report.resolve()}")
 
 
 if __name__ == "__main__":
