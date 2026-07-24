@@ -124,6 +124,7 @@ def test_evaluate_checkpoint_optionally_renders_each_dataset(tmp_path, monkeypat
         render_score_threshold=0.5,
         render_max_predictions=2,
         render_endpoints=True,
+        render_line_width=3,
         render_output_dir=render_root,
         output=output,
     )
@@ -139,6 +140,8 @@ def test_evaluate_checkpoint_optionally_renders_each_dataset(tmp_path, monkeypat
     assert tuple(rendered[42, 31]) == (0, 220, 255)
     assert tuple(rendered[56, 33]) == (255, 128, 0)
     assert tuple(rendered[58, 63]) == (0, 220, 255)
+    assert tuple(rendered[41, 16]) == (96, 255, 64)
+    assert tuple(rendered[57, 48]) == (64, 64, 255)
     assert report["rendering"] == {
         "enabled": True,
         "count": 2,
@@ -146,6 +149,7 @@ def test_evaluate_checkpoint_optionally_renders_each_dataset(tmp_path, monkeypat
         "max_predictions": 2,
         "candidate_limit": 4,
         "endpoints": True,
+        "line_width": 3,
         "output_root": str(render_root.resolve()),
     }
     assert report["datasets"]["wireframe"]["render_dir"] == str(render_dir.resolve())

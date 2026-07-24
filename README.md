@@ -635,7 +635,7 @@ Online-teacher training cost can be measured without starting a full run using `
 
 ## Measurement and deployment
 
-`tools/evaluate_checkpoint.py` evaluates one checkpoint on any repeatable set of validation roots and can optionally render a fixed prefix from each dataset. The left half of every PNG shows GT in green; the right half shows score-filtered predictions in red. Rendering is disabled by default. `--render-count N` enables it, `--render-score-threshold` controls the minimum class-0 score, and `--render-max-predictions` caps the number of drawn lines after score sorting. Add `--render-endpoints` to mark the start of every GT and prediction line in blue and the end in yellow. Dataset names become output subdirectory names, so the following command writes metrics to one JSON report and ten PNG comparisons each under `..._renders/wireframe/` and `..._renders/york/`:
+`tools/evaluate_checkpoint.py` evaluates one checkpoint on any repeatable set of validation roots and can optionally render a fixed prefix from each dataset. The left half of every PNG shows GT in green; the right half shows score-filtered predictions in red. Rendering is disabled by default. `--render-count N` enables it, `--render-score-threshold` controls the minimum class-0 score, and `--render-max-predictions` caps the number of drawn lines after score sorting. Use `--render-line-width N` to set the GT and prediction line width in pixels; when omitted, the width is scaled automatically from the image size. Add `--render-endpoints` to mark the start of every GT and prediction line in blue and the end in yellow. Dataset names become output subdirectory names, so the following command writes metrics to one JSON report and ten PNG comparisons each under `..._renders/wireframe/` and `..._renders/york/`:
 
 ```bash
 uv run --locked python tools/evaluate_checkpoint.py \
@@ -650,6 +650,7 @@ uv run --locked python tools/evaluate_checkpoint.py \
 --render-count 10 \
 --render-score-threshold 0.3 \
 --render-max-predictions 100 \
+--render-line-width 3 \
 --render-endpoints \
 --render-output-dir outputs/evaluations/lineae_3xl-seed42_renders \
 --output outputs/evaluations/lineae_3xl-seed42.json

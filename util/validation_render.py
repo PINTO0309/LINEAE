@@ -112,14 +112,19 @@ def _render_comparison(
     score_threshold: float,
     max_predictions: int,
     draw_endpoints: bool = False,
+    line_width: int | None = None,
 ) -> np.ndarray:
     base = _tensor_to_image(image, image_mean, image_std)
     height, width = base.shape[:2]
     canvas = np.full((height + _HEADER_HEIGHT, width * 2, 3), 255, dtype=np.uint8)
     canvas[_HEADER_HEIGHT:, :width] = base
     canvas[_HEADER_HEIGHT:, width:] = base
-    line_width = max(1, round(min(width, height) / 160))
-    endpoint_radius = max(2, round(line_width * 1.5))
+    effective_line_width = (
+        max(1, round(min(width, height) / 160))
+        if line_width is None
+        else int(line_width)
+    )
+    endpoint_radius = max(2, round(effective_line_width * 1.5))
 
     def draw_line_with_optional_endpoints(
         start: tuple[int, int],
@@ -131,7 +136,7 @@ def _render_comparison(
             start,
             end,
             color,
-            thickness=line_width,
+            thickness=effective_line_width,
             lineType=cv2.LINE_8,
         )
         if draw_endpoints:
@@ -251,6 +256,7 @@ def _save_validation_renders(
     amp: bool,
     replace_existing: bool,
     draw_endpoints: bool = False,
+    line_width: int | None = None,
 ) -> Path | None:
     """Render a fixed validation prefix atomically into one directory."""
     count = int(count)
@@ -268,6 +274,8 @@ def _save_validation_renders(
         raise ValueError("score_threshold must be in [0, 1]")
     if int(max_predictions) <= 0:
         raise ValueError("max_predictions must be positive")
+    if line_width is not None and int(line_width) <= 0:
+        raise ValueError("line_width must be positive")
 
     final_dir = Path(final_dir)
     if final_dir.exists():
@@ -318,6 +326,7 @@ def _save_validation_renders(
                     score_threshold=score_threshold,
                     max_predictions=max_predictions,
                     draw_endpoints=draw_endpoints,
+                    line_width=line_width,
                 )
                 image_id = int(target["image_id"].flatten()[0].item())
                 destination = temporary_dir / f"{saved_count:02d}_image_{image_id}.png"
@@ -360,6 +369,7 @@ def save_validation_renders(
     amp: bool,
     draw_endpoints: bool = False,
     replace_existing: bool = False,
+    line_width: int | None = None,
 ) -> Path | None:
     """Render an evaluated checkpoint, optionally replacing its directory."""
     return _save_validation_renders(
@@ -377,6 +387,7 @@ def save_validation_renders(
         amp=amp,
         replace_existing=replace_existing,
         draw_endpoints=draw_endpoints,
+        line_width=line_width,
     )
 
 

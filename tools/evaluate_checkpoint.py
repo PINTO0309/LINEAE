@@ -88,6 +88,12 @@ def evaluate(args) -> dict:
     render_count = int(getattr(args, "render_count", 0))
     render_score_threshold = float(getattr(args, "render_score_threshold", 0.3))
     render_endpoints = bool(getattr(args, "render_endpoints", False))
+    configured_render_line_width = getattr(args, "render_line_width", None)
+    render_line_width = (
+        None
+        if configured_render_line_width is None
+        else int(configured_render_line_width)
+    )
     requested_render_max = getattr(args, "render_max_predictions", None)
     render_max_predictions = (
         min(100, num_select)
@@ -100,6 +106,8 @@ def evaluate(args) -> dict:
         raise ValueError("--render-only requires --render-count greater than zero")
     if not 0.0 <= render_score_threshold <= 1.0:
         raise ValueError("render_score_threshold must be in [0, 1]")
+    if render_line_width is not None and render_line_width <= 0:
+        raise ValueError("render_line_width must be positive")
     render_maximum = int(config.num_queries) if render_only else num_select
     if not 0 < render_max_predictions <= render_maximum:
         maximum_name = "num_queries" if render_only else "effective num_select"
@@ -209,6 +217,7 @@ def evaluate(args) -> dict:
                 batch_size=min(args.batch_size, render_count),
                 amp=args.amp,
                 draw_endpoints=render_endpoints,
+                line_width=render_line_width,
                 replace_existing=True,
             )
         annotation = dataset_root / "annotations" / "lines_val2017.json"
@@ -243,6 +252,7 @@ def evaluate(args) -> dict:
             "max_predictions": render_max_predictions,
             "candidate_limit": render_candidate_limit,
             "endpoints": render_endpoints,
+            "line_width": render_line_width,
             "output_root": (
                 str(render_output_root.resolve())
                 if render_output_root is not None
@@ -311,6 +321,14 @@ def main() -> None:
         "--render-endpoints",
         action="store_true",
         help="draw a filled point at both endpoints of every rendered line",
+    )
+    parser.add_argument(
+        "--render-line-width",
+        type=_positive_integer,
+        help=(
+            "line width in pixels for GT and prediction renders; "
+            "defaults to automatic scaling based on image size"
+        ),
     )
     parser.add_argument(
         "--render-output-dir",
