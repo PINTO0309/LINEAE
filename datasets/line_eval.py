@@ -45,8 +45,12 @@ class LineEvaluator(object):
         dist, choice = torch.min(dist, 1)
         return dist, choice
 
-    def msTPFP(self, distances, choice, threshold):
-        hit = torch.zeros_like(distances)
+    def msTPFP(self, distances, choice, threshold, ground_truth_count):
+        hit = torch.zeros(
+            ground_truth_count,
+            dtype=torch.bool,
+            device=distances.device,
+        )
         tp = torch.zeros_like(distances)
         fp = torch.zeros_like(distances)
 
@@ -64,9 +68,10 @@ class LineEvaluator(object):
 
         for pred_l, gt in zip(pred_lines, ground_truth):
             gt_l = self.prepare(gt['lines'])
-            self.n_gt.append(len(gt_l))
+            ground_truth_count = len(gt_l)
+            self.n_gt.append(ground_truth_count)
 
-            if len(gt_l) == 0:
+            if ground_truth_count == 0:
                 distances = torch.full(
                     (len(pred_l),), float('inf'), dtype=pred_l.dtype, device=pred_l.device
                 )
@@ -74,7 +79,12 @@ class LineEvaluator(object):
             else:
                 distances, choices = self.compute_distances(pred_l, gt_l)
             for k, v in self.spa_metrics.items():
-                tp, fp = self.msTPFP(distances, choices, v)
+                tp, fp = self.msTPFP(
+                    distances,
+                    choices,
+                    v,
+                    ground_truth_count,
+                )
                 self.tp[k].append(tp.detach().cpu())
                 self.fp[k].append(fp.detach().cpu())
 
@@ -220,7 +230,12 @@ class DualLineEvaluator(object):
             else:
                 distances, choices = self.official.compute_distances(pred_l, gt_l)
             for metric, threshold in self.official.spa_metrics.items():
-                tp, fp = self.official.msTPFP(distances, choices, threshold)
+                tp, fp = self.official.msTPFP(
+                    distances,
+                    choices,
+                    threshold,
+                    ground_truth_count,
+                )
                 self.official.tp[metric].append(tp.detach().cpu())
                 self.official.fp[metric].append(fp.detach().cpu())
                 self.deploy.tp[metric].append(tp[:deploy_count].detach().cpu())

@@ -26,6 +26,7 @@ DEFAULT_OUTPUT_DIRECTORY = PROJECT_ROOT / "output" / "demo_lineae"
 DEFAULT_SCORE_THRESHOLD = 0.3
 DEFAULT_MAX_LINES = 100
 DEFAULT_VIDEO_FPS = 30.0
+CAMERA_FPS_CALIBRATION_FRAMES = 10
 IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".webp"}
 VARIANTS = ("A", "F", "P", "N", "T", "S", "M", "L", "X", "XL", "2XL", "3XL")
 LINEA_VARIANTS = frozenset(("A", "F", "P", "N", "T"))
@@ -622,6 +623,50 @@ def open_video_writer(path: Path, fps: float, frame: np.ndarray) -> cv2.VideoWri
     return writer
 
 
+def select_camera_recording_fps(
+    camera_fps: float,
+    processing_durations: list[float],
+) -> tuple[float, float | None]:
+    valid_durations = np.asarray(processing_durations, dtype=np.float64)
+    valid_durations = valid_durations[
+        np.isfinite(valid_durations) & (valid_durations > 0.0)
+    ]
+    if valid_durations.size < 2:
+        return camera_fps, None
+
+    processing_fps = 1.0 / float(np.median(valid_durations))
+    return min(camera_fps, processing_fps), processing_fps
+
+
+def open_calibrated_camera_writer(
+    path: Path,
+    camera_fps: float,
+    processing_durations: list[float],
+    buffered_frames: list[np.ndarray],
+) -> cv2.VideoWriter:
+    recording_fps, processing_fps = select_camera_recording_fps(
+        camera_fps,
+        processing_durations,
+    )
+    processing_fps_text = (
+        "unavailable" if processing_fps is None else f"{processing_fps:.2f}"
+    )
+    print(
+        f"Camera recording FPS: camera={camera_fps:.2f}, "
+        f"processing={processing_fps_text}, output={recording_fps:.2f}, "
+        f"samples={len(processing_durations)}"
+    )
+
+    writer = open_video_writer(path, recording_fps, buffered_frames[0])
+    try:
+        for frame in buffered_frames:
+            writer.write(frame)
+    except Exception:
+        writer.release()
+        raise
+    return writer
+
+
 def process_video_source(
     model: LineaeOnnxModel,
     capture_source: str | int,
@@ -630,6 +675,7 @@ def process_video_source(
     max_lines: int,
     display: DisplayWindow,
     save_result: bool,
+    adjust_recording_fps: bool = False,
 ) -> None:
     capture = cv2.VideoCapture(capture_source)
     if not capture.isOpened():
@@ -641,9 +687,17 @@ def process_video_source(
         fps = DEFAULT_VIDEO_FPS
 
     writer: cv2.VideoWriter | None = None
+    buffered_frames: list[np.ndarray] = []
+    processing_durations: list[float] = []
     frame_count = 0
     try:
         while True:
+            calibrating_recording_fps = (
+                save_result and adjust_recording_fps and writer is None
+            )
+            processing_started_at = (
+                time.perf_counter() if calibrating_recording_fps else None
+            )
             success, frame = capture.read()
             if not success:
                 break
@@ -657,11 +711,27 @@ def process_video_source(
                 max_lines,
                 elapsed_ms=elapsed_ms,
             )
+            if processing_started_at is not None:
+                processing_durations.append(
+                    time.perf_counter() - processing_started_at
+                )
 
             if save_result:
-                if writer is None:
+                if adjust_recording_fps and writer is None:
+                    buffered_frames.append(result.copy())
+                    if len(buffered_frames) >= CAMERA_FPS_CALIBRATION_FRAMES:
+                        writer = open_calibrated_camera_writer(
+                            output_path,
+                            fps,
+                            processing_durations,
+                            buffered_frames,
+                        )
+                        buffered_frames.clear()
+                elif writer is None:
                     writer = open_video_writer(output_path, fps, result)
-                writer.write(result)
+                    writer.write(result)
+                else:
+                    writer.write(result)
             if frame_count % 30 == 0:
                 print(
                     f"Processed {frame_count} frames: {elapsed_ms:.2f} ms, "
@@ -669,6 +739,15 @@ def process_video_source(
                 )
             if display.show(result, 1):
                 break
+
+        if save_result and adjust_recording_fps and writer is None and buffered_frames:
+            writer = open_calibrated_camera_writer(
+                output_path,
+                fps,
+                processing_durations,
+                buffered_frames,
+            )
+            buffered_frames.clear()
     finally:
         capture.release()
         if writer is not None:
@@ -741,6 +820,7 @@ def main() -> None:
                 max_lines=args.max_lines,
                 display=display,
                 save_result=save_result,
+                adjust_recording_fps=True,
             )
     finally:
         display.close()

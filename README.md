@@ -136,7 +136,7 @@ The following exact counts are produced from each committed default config with 
 | [LINEA-S](https://github.com/SebastianJanampa/LINEA) |          2.2 |                6.2 |       8.4 |   29.4 |58.4|64.7|67.6|28.9|32.6|34.8|
 | [LINEA-M](https://github.com/SebastianJanampa/LINEA) |          6.0 |                7.3 |      13.3 |   43.4 |59.5|66.3|69.1|30.3|34.5|36.7|
 | [LINEA-L](https://github.com/SebastianJanampa/LINEA) |          13.5 |              11.5 |      25.0 |   81.5 |61.0|67.9|70.8|30.9|34.9|37.3|
-| A       |          0.3 |                1.6 |       1.9 |    2.5 |||||||
+| A       |          0.3 |                1.6 |       1.9 |    2.5 |48.98|57.25|60.84|27.50|34.70|38.63|
 | F       |          0.7 |                1.9 |       2.6 |    4.7 |55.68|62.73|65.73|35.19|41.05|44.57|
 | P       |          1.0 |                2.0 |       3.0 |   10.8 |60.51|66.36|69.21|38.24|42.85|46.03|
 | N       |          1.9 |                2.1 |       3.9 |   11.7 |61.30|66.91|69.61|43.91|48.29|51.04|
@@ -838,7 +838,7 @@ uv run --locked --extra export python demo_lineae.py \
 --max-lines 1100
 ```
 
-The script applies sigmoid to class-0 logits, converts normalized `[x1,y1,x2,y2]` predictions back to the source image dimensions, and renders the highest-scoring threshold-passing lines. `--max-lines` limits drawing only; the ONNX graph still computes the top-k embedded by `tools/export_onnx.py`. Results default to `output/demo_lineae/`. Use `--execution-provider cpu` or `tensorrt` as needed and `--disable-save` for display-only operation. TensorRT execution always sets `trt_engine_cache_path` to the selected ONNX model's directory, so its generated engine cache is stored beside that model.
+The script applies sigmoid to class-0 logits, converts normalized `[x1,y1,x2,y2]` predictions back to the source image dimensions, and renders the highest-scoring threshold-passing lines. `--max-lines` limits drawing only; the ONNX graph still computes the top-k embedded by `tools/export_onnx.py`. Results default to `output/demo_lineae/`. Use `--execution-provider cpu` or `tensorrt` as needed and `--disable-save` for display-only operation. Camera recording buffers its first 10 processed frames and sets the MP4 frame rate to the lower of the reported camera rate (30 FPS when unavailable) and the measured capture-through-render processing rate, preventing slow inference from producing fast-motion playback. Prerecorded video retains its source frame rate. TensorRT execution always sets `trt_engine_cache_path` to the selected ONNX model's directory, so its generated engine cache is stored beside that model.
 
 ## Licensing
 

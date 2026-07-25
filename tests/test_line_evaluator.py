@@ -80,3 +80,28 @@ def test_dual_evaluator_separates_official_and_deployment_sap(capsys):
     assert "Official sAP (all 3 queries):" in output
     assert "Deployment sAP (top 2 queries):" in output
     assert "deploy_sap10:\t0.0" in output
+
+
+def test_evaluator_supports_more_ground_truth_lines_than_queries():
+    evaluator = DualLineEvaluator(deploy_max_predictions=1)
+    matching_line = [0.1, 0.2, 0.8, 0.9]
+    predictions = {
+        "pred_logits": torch.tensor([[[10.0, -10.0]]]),
+        "pred_lines": torch.tensor([[matching_line]]),
+    }
+    targets = [
+        {
+            "lines": torch.tensor(
+                [
+                    [0.0, 0.0, 0.0, 0.0],
+                    matching_line,
+                ]
+            )
+        }
+    ]
+
+    evaluator.update(predictions, targets)
+    evaluator.accumulate()
+
+    assert evaluator.sap_results["official_sap5"] == pytest.approx(50.0)
+    assert evaluator.sap_results["deploy_sap5"] == pytest.approx(50.0)

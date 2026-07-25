@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 import pytest
 
+import demo_lineae
 from demo_lineae import (
     LINEA_VARIANTS,
     PREPROCESS_PROFILES,
@@ -11,7 +12,9 @@ from demo_lineae import (
     build_providers,
     infer_variant_from_model,
     preprocess_bgr_image,
+    process_video_source,
     resolve_variant,
+    select_camera_recording_fps,
     sigmoid,
 )
 
@@ -103,3 +106,221 @@ def test_sigmoid_is_stable_and_render_filter_is_bounded():
     assert count == 1
     assert rendered.shape == image.shape
     assert np.any(rendered != image)
+
+
+@pytest.mark.parametrize(
+    ("durations", "expected_recording_fps", "expected_processing_fps"),
+    [
+        ([0.075] * 10, 1.0 / 0.075, 1.0 / 0.075),
+        ([0.020] * 10, 30.0, 50.0),
+        ([1.0] + [0.075] * 9, 1.0 / 0.075, 1.0 / 0.075),
+        ([0.075], 30.0, None),
+    ],
+)
+def test_camera_recording_fps_uses_median_and_does_not_exceed_camera_rate(
+    durations,
+    expected_recording_fps,
+    expected_processing_fps,
+):
+    recording_fps, processing_fps = select_camera_recording_fps(30.0, durations)
+
+    assert recording_fps == pytest.approx(expected_recording_fps)
+    if expected_processing_fps is None:
+        assert processing_fps is None
+    else:
+        assert processing_fps == pytest.approx(expected_processing_fps)
+
+
+class FakeCapture:
+    def __init__(self, frames, fps=30.0):
+        self.frames = [frame.copy() for frame in frames]
+        self.fps = fps
+        self.released = False
+
+    def isOpened(self):
+        return True
+
+    def get(self, property_id):
+        assert property_id == cv2.CAP_PROP_FPS
+        return self.fps
+
+    def read(self):
+        if not self.frames:
+            return False, None
+        return True, self.frames.pop(0)
+
+    def release(self):
+        self.released = True
+
+
+class FakeWriter:
+    def __init__(self):
+        self.frames = []
+        self.released = False
+
+    def write(self, frame):
+        self.frames.append(frame.copy())
+
+    def release(self):
+        self.released = True
+
+
+class FakeDisplay:
+    def show(self, image, delay):
+        return False
+
+
+def fake_model(frame):
+    return (
+        np.empty((0, 4), dtype=np.float32),
+        np.empty((0,), dtype=np.float32),
+        1.0,
+    )
+
+
+def install_video_fakes(monkeypatch, frames, durations):
+    capture = FakeCapture(frames)
+    writer = FakeWriter()
+    writer_calls = []
+    ticks = []
+    current_time = 0.0
+    for duration in durations:
+        ticks.extend((current_time, current_time + duration))
+        current_time += duration
+    ticks.append(current_time)
+    tick_iterator = iter(ticks)
+
+    monkeypatch.setattr(demo_lineae.cv2, "VideoCapture", lambda source: capture)
+    monkeypatch.setattr(demo_lineae.time, "perf_counter", lambda: next(tick_iterator))
+    monkeypatch.setattr(
+        demo_lineae,
+        "annotate_image",
+        lambda frame, *args, **kwargs: (frame.copy(), 0),
+    )
+
+    def fake_open_video_writer(path, fps, frame):
+        writer_calls.append((path, fps, frame.copy()))
+        return writer
+
+    monkeypatch.setattr(demo_lineae, "open_video_writer", fake_open_video_writer)
+    return capture, writer, writer_calls
+
+
+def test_camera_recording_buffers_calibration_frames_without_loss(monkeypatch, tmp_path):
+    frames = [np.full((2, 3, 3), index, dtype=np.uint8) for index in range(12)]
+    capture, writer, writer_calls = install_video_fakes(
+        monkeypatch,
+        frames,
+        [0.075] * 10,
+    )
+
+    process_video_source(
+        model=fake_model,
+        capture_source=0,
+        output_path=tmp_path / "camera.mp4",
+        threshold=0.3,
+        max_lines=100,
+        display=FakeDisplay(),
+        save_result=True,
+        adjust_recording_fps=True,
+    )
+
+    assert len(writer_calls) == 1
+    assert writer_calls[0][1] == pytest.approx(1.0 / 0.075)
+    assert [int(frame[0, 0, 0]) for frame in writer.frames] == list(range(12))
+    assert capture.released
+    assert writer.released
+
+
+def test_short_camera_recording_flushes_available_frames(monkeypatch, tmp_path):
+    frames = [np.full((2, 3, 3), index, dtype=np.uint8) for index in range(3)]
+    _, writer, writer_calls = install_video_fakes(
+        monkeypatch,
+        frames,
+        [0.10, 0.08, 0.09],
+    )
+
+    process_video_source(
+        model=fake_model,
+        capture_source=0,
+        output_path=tmp_path / "short-camera.mp4",
+        threshold=0.3,
+        max_lines=100,
+        display=FakeDisplay(),
+        save_result=True,
+        adjust_recording_fps=True,
+    )
+
+    assert writer_calls[0][1] == pytest.approx(1.0 / 0.09)
+    assert [int(frame[0, 0, 0]) for frame in writer.frames] == [0, 1, 2]
+
+
+def test_prerecorded_video_keeps_source_fps_without_calibration(monkeypatch, tmp_path):
+    frames = [np.full((2, 3, 3), index, dtype=np.uint8) for index in range(2)]
+    capture = FakeCapture(frames, fps=24.0)
+    writer = FakeWriter()
+    writer_calls = []
+
+    monkeypatch.setattr(demo_lineae.cv2, "VideoCapture", lambda source: capture)
+    monkeypatch.setattr(
+        demo_lineae,
+        "annotate_image",
+        lambda frame, *args, **kwargs: (frame.copy(), 0),
+    )
+    monkeypatch.setattr(
+        demo_lineae.time,
+        "perf_counter",
+        lambda: pytest.fail("video-file recording must not calibrate FPS"),
+    )
+
+    def fake_open_video_writer(path, fps, frame):
+        writer_calls.append((path, fps, frame.copy()))
+        return writer
+
+    monkeypatch.setattr(demo_lineae, "open_video_writer", fake_open_video_writer)
+
+    process_video_source(
+        model=fake_model,
+        capture_source="input.mp4",
+        output_path=tmp_path / "video.mp4",
+        threshold=0.3,
+        max_lines=100,
+        display=FakeDisplay(),
+        save_result=True,
+    )
+
+    assert writer_calls[0][1] == 24.0
+    assert [int(frame[0, 0, 0]) for frame in writer.frames] == [0, 1]
+
+
+def test_disabled_camera_save_does_not_calibrate_or_open_writer(monkeypatch, tmp_path):
+    capture = FakeCapture([np.zeros((2, 3, 3), dtype=np.uint8)])
+    monkeypatch.setattr(demo_lineae.cv2, "VideoCapture", lambda source: capture)
+    monkeypatch.setattr(
+        demo_lineae,
+        "annotate_image",
+        lambda frame, *args, **kwargs: (frame.copy(), 0),
+    )
+    monkeypatch.setattr(
+        demo_lineae.time,
+        "perf_counter",
+        lambda: pytest.fail("disabled recording must not calibrate FPS"),
+    )
+    monkeypatch.setattr(
+        demo_lineae,
+        "open_video_writer",
+        lambda *args, **kwargs: pytest.fail("disabled recording must not open a writer"),
+    )
+
+    process_video_source(
+        model=fake_model,
+        capture_source=0,
+        output_path=tmp_path / "unused.mp4",
+        threshold=0.3,
+        max_lines=100,
+        display=FakeDisplay(),
+        save_result=False,
+        adjust_recording_fps=True,
+    )
+
+    assert capture.released
