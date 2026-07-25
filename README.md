@@ -4,17 +4,16 @@ LINEAE (**LINEA E**nhanced) is an experimental successor to [LINEA](https://gith
 
 https://github.com/user-attachments/assets/008f5a87-0411-4599-b699-45d163121d9c
 
-## Implemented variants
+## Setup
 
-| Variant    | Backbone                            |   Initial input |
-| ---------- | ----------------------------------- | --------------: |
-| A / F / P  | HGNetV2 Atto / Femto / Pico         | 320 / 416 / 640 |
-| N / T      | HGNetV2-B0 / B1                     |             640 |
-| S / M      | DINOv3 Tiny / Tiny+                 |             640 |
-| L / X / XL | official DINOv3 S/16 / S+/16 / B/16 |             640 |
-| 2XL / 3XL  | official DINOv3 L/16 / H+/16         |             640 |
+The Python version and dependencies are pinned in `pyproject.toml`.
 
-The authoritative mapping, including exact bootstrap filenames, is in `models/lineae/variants.py`.
+```bash
+git clone https://github.com/PINTO0309/LINEAE.git && cd LINEAE
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv sync
+source .venv/bin/activate
+```
 
 ## Demo
 ```bash
@@ -38,6 +37,18 @@ python demo_lineae.py \
 --execution-provider cpu \
 --score-threshold 0.2
 ```
+
+## Implemented variants
+
+| Variant    | Backbone                            |   Initial input |
+| ---------- | ----------------------------------- | --------------: |
+| A / F / P  | HGNetV2 Atto / Femto / Pico         | 320 / 416 / 640 |
+| N / T      | HGNetV2-B0 / B1                     |             640 |
+| S / M      | DINOv3 Tiny / Tiny+                 |             640 |
+| L / X / XL | official DINOv3 S/16 / S+/16 / B/16 |             640 |
+| 2XL / 3XL  | official DINOv3 L/16 / H+/16         |             640 |
+
+The authoritative mapping, including exact bootstrap filenames, is in `models/lineae/variants.py`.
 
 ## Parameter inventory
 
