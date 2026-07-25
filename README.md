@@ -16,6 +16,29 @@ https://github.com/user-attachments/assets/008f5a87-0411-4599-b699-45d163121d9c
 
 The authoritative mapping, including exact bootstrap filenames, is in `models/lineae/variants.py`.
 
+## Demo
+```bash
+python demo_lineae.py \
+--input 0 \
+--model lineae_n_1x3x640x640_1100.onnx \
+--execution-provider tensorrt \
+--score-threshold 0.2
+```
+```bash
+python demo_lineae.py \
+--input 0 \
+--model lineae_n_1x3x640x640_1100.onnx \
+--execution-provider cuda \
+--score-threshold 0.2
+```
+```bash
+python demo_lineae.py \
+--input 0 \
+--model lineae_n_1x3x640x640_1100.onnx \
+--execution-provider cpu \
+--score-threshold 0.2
+```
+
 ## Parameter inventory
 
 The following exact counts are produced from each committed default config with pretrained loading disabled and after `model.deploy()`, matching the graph used by the Torch/ONNX/TensorRT benchmarks. `Backbone` means `model.backbone`: for DINO variants it includes the Simple Feature Pyramid (SFP), and for A/F/P it includes the efficient synthetic P5. `Head` is the hybrid encoder plus decoder. Default output-KD adds no student parameters; optional feature-KD projections are training-only and are removed by `deploy()`.
