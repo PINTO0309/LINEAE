@@ -102,6 +102,15 @@ wheels = [
 ]
 
 [[package]]
+name = "colorama"
+version = "0.4.6"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d8/53/6f443c9a4a8358a93a6792e2acffb9d9d5cb0a5cfd8802644b7b1c9a02e4/colorama-0.4.6.tar.gz", hash = "sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44", size = 27697, upload-time = "2022-10-25T02:36:22.414Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d1/d6/3965ed04c63042e047cb6a3e6ed1a63a35087b6a609aa3a15ed8ac56c221/colorama-0.4.6-py2.py3-none-any.whl", hash = "sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6", size = 25335, upload-time = "2022-10-25T02:36:20.889Z" },
+]
+
+[[package]]
 name = "cuda-bindings"
 version = "12.9.7"
 source = { registry = "https://pypi.org/simple" }
@@ -319,6 +328,7 @@ export = [
     { name = "onnx", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "onnxruntime-gpu", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "onnxsim", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "onnxslim", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
 ]
 tensorrt = [
     { name = "pycuda", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
@@ -334,6 +344,7 @@ requires-dist = [
     { name = "onnx", marker = "extra == 'export'", specifier = "==1.22.0" },
     { name = "onnxruntime-gpu", marker = "extra == 'export'", specifier = "==1.26.0" },
     { name = "onnxsim", marker = "extra == 'export'", specifier = "==0.6.5" },
+    { name = "onnxslim", marker = "extra == 'export'", specifier = "==0.1.94" },
     { name = "opencv-python", specifier = "==4.13.0.92" },
     { name = "pycocotools", specifier = "==2.0.11" },
     { name = "pycuda", marker = "extra == 'tensorrt'", specifier = "==2026.1" },
@@ -652,6 +663,22 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e1/e5/3fe3becdaabeaaf38525c79cb2170a5a356a4555c4c7e4f621608262b2a2/onnxsim-0.6.5-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:4fbfd08d09c9be8b5066358b3705a7dc8df68904ba4a629a77bb20beb6d09bcc", size = 2942368, upload-time = "2026-06-08T11:33:27.108Z" },
     { url = "https://files.pythonhosted.org/packages/01/82/6ea262bb9500a30b54181946ec0ce093530895afacb66ac6b86688713dff/onnxsim-0.6.5-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:bc7c2717c0bc0ffa21e501c675af520f344e70f2bfda835e8fefa127ffd6ac92", size = 2937976, upload-time = "2026-06-08T11:33:34.72Z" },
     { url = "https://files.pythonhosted.org/packages/5b/60/cb6923cded2b7933a8ae171bbc377f87dc1203464c0fd9f006ffe61857ac/onnxsim-0.6.5-cp314-cp314t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:30025eaed4c5262fb0f2e2faec911c4693029e89104b7595fb207bf6f6c9471d", size = 2943591, upload-time = "2026-06-08T11:33:38.203Z" },
+]
+
+[[package]]
+name = "onnxslim"
+version = "0.1.94"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "colorama", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "ml-dtypes", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "onnx", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "packaging", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "sympy", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/63/70/08f6099dee785ede13d38c36de20347df34f67046fc670f24c65ad741287/onnxslim-0.1.94.tar.gz", hash = "sha256:83a3d428e55a0d1b7db88a4eadf8b1763bc38e8f7e4a48cbe72c5a7bbaf583b3", size = 598083, upload-time = "2026-05-22T01:37:56.937Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/93/42/749b09a43bb21542097071ed43cc7c129a62d535ff5166b9ed53c01ac9cb/onnxslim-0.1.94-py3-none-any.whl", hash = "sha256:1ec3f828cad98ff4fc92d06c6eb243e16c0e314728d88ea0bc1f6da19f250522", size = 238391, upload-time = "2026-05-22T01:37:55.056Z" },
 ]
 
 [[package]]

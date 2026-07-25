@@ -1,6 +1,7 @@
 from collections import Counter
 from pathlib import Path
 
+import numpy as np
 import onnx
 import onnxruntime as ort
 import onnxsim
@@ -11,8 +12,11 @@ from main import create
 from tools.deployment_parity import compare_line_sets
 from tools.export_onnx import (
     ExportWrapper,
+    consolidate_external_onnx,
+    external_data_paths,
     find_redundant_decoder_selection_chains,
     resolve_export_num_select,
+    simplify_external_onnx,
 )
 from util.deployment import resolve_num_select
 from util.onnx_runtime import create_ort_session
@@ -43,6 +47,143 @@ def test_export_tool_does_not_run_onnx_runtime_parity():
     assert "--cuda-ort" not in source
     assert 'args.output.with_suffix(".export.json")' not in source
     assert "if args.report is not None:" in source
+    assert "str(output_path)" in source
+    assert "external_data=True" in source
+    assert '"--skip-shape-inference"' in source
+
+
+def test_external_data_is_simplified_without_shape_inference(tmp_path):
+    input_info = onnx.helper.make_tensor_value_info(
+        "input", onnx.TensorProto.FLOAT, [1, 64]
+    )
+    output_info = onnx.helper.make_tensor_value_info(
+        "output", onnx.TensorProto.FLOAT, [1, 64]
+    )
+    weight_values = np.arange(64 * 64, dtype=np.float32).reshape(64, 64)
+    weight = onnx.numpy_helper.from_array(weight_values, name="weight")
+    bias_values = np.linspace(-0.5, 0.5, 64, dtype=np.float32)[None]
+    constant_name = "_model_encoder_encoder.0_layers.0_Constant_attr__value"
+    bias = onnx.numpy_helper.from_array(bias_values, name=constant_name)
+    graph = onnx.helper.make_graph(
+        [
+            onnx.helper.make_node(
+                "Constant", [], ["bias"], name="encoder_constant", value=bias
+            ),
+            onnx.helper.make_node("MatMul", ["input", "weight"], ["projected"]),
+            onnx.helper.make_node("Add", ["projected", "bias"], ["output"]),
+        ],
+        "external-data-test",
+        [input_info],
+        [output_info],
+        [weight],
+    )
+    model = onnx.helper.make_model(
+        graph,
+        opset_imports=[onnx.helper.make_opsetid("", 17)],
+    )
+    model.ir_version = 10
+    model_path = tmp_path / "model.onnx"
+    original_weight_path = tmp_path / weight.name
+    original_constant_path = tmp_path / constant_name
+    onnx.save_model(
+        model,
+        str(model_path),
+        save_as_external_data=True,
+        all_tensors_to_one_file=False,
+        size_threshold=0,
+        convert_attribute=True,
+    )
+
+    metadata = onnx.load(str(model_path), load_external_data=False)
+    assert external_data_paths(model_path, metadata) == sorted(
+        [original_constant_path, original_weight_path]
+    )
+
+    simplified = simplify_external_onnx(model_path)
+    final_data_path = tmp_path / "model.onnx.data"
+
+    onnx.checker.check_model(str(model_path))
+    assert external_data_paths(model_path, simplified) == [final_data_path]
+    assert final_data_path.is_file()
+    assert final_data_path.stat().st_size > 0
+    assert not original_constant_path.exists()
+    assert not original_weight_path.exists()
+    input_values = np.linspace(-1.0, 1.0, 64, dtype=np.float32)[None]
+    session = ort.InferenceSession(
+        str(model_path), providers=["CPUExecutionProvider"]
+    )
+    actual = session.run(None, {"input": input_values})[0]
+    np.testing.assert_allclose(
+        actual, input_values @ weight_values + bias_values, rtol=1e-6
+    )
+
+
+def test_external_data_is_consolidated_without_simplifying_graph(tmp_path):
+    input_info = onnx.helper.make_tensor_value_info(
+        "input", onnx.TensorProto.FLOAT, [1, 4]
+    )
+    output_info = onnx.helper.make_tensor_value_info(
+        "output", onnx.TensorProto.FLOAT, [1, 4]
+    )
+    weight_values = np.arange(16, dtype=np.float32).reshape(4, 4)
+    bias_values = np.linspace(-0.5, 0.5, 4, dtype=np.float32)[None]
+    weight = onnx.numpy_helper.from_array(weight_values, name="weight")
+    constant_name = "_model_encoder_Constant_attr__value"
+    bias = onnx.numpy_helper.from_array(bias_values, name=constant_name)
+    nodes = [
+        onnx.helper.make_node(
+            "Constant", [], ["bias"], name="constant", value=bias
+        ),
+        onnx.helper.make_node("MatMul", ["input", "weight"], ["projected"]),
+        onnx.helper.make_node("Add", ["projected", "bias"], ["output"]),
+    ]
+    graph = onnx.helper.make_graph(
+        nodes,
+        "external-data-consolidation-test",
+        [input_info],
+        [output_info],
+        [weight],
+    )
+    model = onnx.helper.make_model(
+        graph,
+        opset_imports=[onnx.helper.make_opsetid("", 17)],
+    )
+    model.ir_version = 10
+    model_path = tmp_path / "model.onnx"
+    original_paths = [tmp_path / constant_name, tmp_path / weight.name]
+    onnx.save_model(
+        model,
+        str(model_path),
+        save_as_external_data=True,
+        all_tensors_to_one_file=False,
+        size_threshold=0,
+        convert_attribute=True,
+    )
+    original_metadata = onnx.load(str(model_path), load_external_data=False)
+    original_nodes = [
+        (node.name, node.op_type, tuple(node.input), tuple(node.output))
+        for node in original_metadata.graph.node
+    ]
+
+    consolidated = consolidate_external_onnx(model_path)
+    final_data_path = tmp_path / "model.onnx.data"
+
+    onnx.checker.check_model(str(model_path))
+    assert external_data_paths(model_path, consolidated) == [final_data_path]
+    assert final_data_path.is_file()
+    assert all(not path.exists() for path in original_paths)
+    assert [
+        (node.name, node.op_type, tuple(node.input), tuple(node.output))
+        for node in consolidated.graph.node
+    ] == original_nodes
+    input_values = np.linspace(-1.0, 1.0, 4, dtype=np.float32)[None]
+    session = ort.InferenceSession(
+        str(model_path), providers=["CPUExecutionProvider"]
+    )
+    actual = session.run(None, {"input": input_values})[0]
+    np.testing.assert_allclose(
+        actual, input_values @ weight_values + bias_values, rtol=1e-6
+    )
 
 
 def test_legacy_decoder_stack_permute_gather_chain_is_detected():

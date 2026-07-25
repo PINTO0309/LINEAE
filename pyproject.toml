@@ -29,6 +29,7 @@ export = [
     "onnx==1.22.0",
     "onnxruntime-gpu==1.26.0",
     "onnxsim==0.6.5",
+    "onnxslim==0.1.94",
 ]
 tensorrt = [
     "pycuda==2026.1",
