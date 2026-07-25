@@ -79,7 +79,7 @@ The estimates combine three reference anchors. The original N recipe supplies N'
 | M | `configs/lineae/lineae_m.py` | 45 | 28,125 | `configs/lineae/distill/lineae_m.py` | 45 | 28,125 |
 | L | `configs/lineae/lineae_l.py` | 40 | 25,000 | `configs/lineae/distill/lineae_l.py` | 40 | 25,000 |
 | X | `configs/lineae/lineae_x.py` | 35 | 21,875 | `configs/lineae/distill/lineae_x.py` | 35 | 21,875 |
-| XL | `configs/lineae/lineae_xl.py` | 36 | 22,500 | not applicable (supervised teacher) | — | — |
+| XL | `configs/lineae/lineae_xl.py` | 36 | 22,500 | `configs/lineae/distill/lineae_xl.py` | 36 | 22,500 |
 | 2XL | `configs/lineae/lineae_2xl.py` | 50 | 31,250 | not applicable (supervised teacher) | — | — |
 | 3XL | `configs/lineae/lineae_3xl.py` | 50 | 31,250 | not applicable (supervised teacher) | — | — |
 
@@ -136,10 +136,11 @@ The final fully unfrozen span differs because each recipe has a different epoch 
 | X no-KD | `configs/lineae/lineae_x.py` | 35 | 23–34 | 12 |
 | X direct-XL KD | `configs/lineae/distill/lineae_x.py` | 35 | 23–34 | 12 |
 | XL no-KD teacher | `configs/lineae/lineae_xl.py` | 36 | 23–35 | 13 |
+| XL 3XL-teacher KD | `configs/lineae/distill/lineae_xl.py` | 36 | 23–35 | 13 |
 | 2XL no-KD teacher candidate | `configs/lineae/lineae_2xl.py` | 50 | 0–49 | 50 |
 | 3XL no-KD teacher candidate | `configs/lineae/lineae_3xl.py` | 50 | 0–49 | 50 |
 
-X-teacher cascade and tuning configs inherit the corresponding direct-XL KD schedule. The XL EMA and photometric ablations inherit the normal XL schedule. `configs/lineae/ablations/lineae_xl_frozen.py` is the explicit exception: it disables progressive unfreezing and keeps the entire DINO core frozen for all 36 epochs.
+X-teacher cascade and tuning configs inherit the corresponding direct-XL KD schedule. `configs/lineae/distill/lineae_xl.py` distills XL from the 3XL config and requires the qualified `ckpts/lineae_3xl_teacher.pth`; it is not part of the smaller-student cascade. The XL EMA and photometric ablations inherit the normal XL schedule. `configs/lineae/ablations/lineae_xl_frozen.py` is the explicit exception: it disables progressive unfreezing and keeps the entire DINO core frozen for all 36 epochs.
 
 ## Setup and preflight
 
