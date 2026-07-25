@@ -41,6 +41,27 @@ python demo_lineae.py \
 --score-threshold 0.2
 ```
 
+## Datasets
+
+Please use the data from the original LINEA paper.
+
+https://github.com/SebastianJanampa/LINEA#data-preparation
+
+```bash
+curl -fL \
+-o data/wireframe_processed.zip \
+https://github.com/SebastianJanampa/storage/releases/download/v1.0.0/wireframe_processed.zip
+
+curl -fL \
+-o data/york_processed.zip \
+https://github.com/SebastianJanampa/storage/releases/download/v1.0.0/york_processed.zip
+
+unzip data/wireframe_processed.zip -d data
+unzip data/york_processed.zip -d data
+
+rm -f data/*.zip
+```
+
 ## Implemented variants
 
 | Variant    | Backbone                            |   Initial input |
@@ -77,7 +98,7 @@ The following exact counts are produced from each committed default config with 
 | M       |         10.6 |                6.7 |      17.3 |   55.5 |63.86|70.05|72.51|60.68|65.87|68.32|
 | L       |         23.0 |                6.7 |      29.7 |   94.5 |65.00|71.48|74.00|57.67|63.93|66.46|
 | X       |         30.1 |                8.1 |      38.2 |  121.2 |65.94|72.32|74.72|62.22|68.49|71.01|
-| XL      |         88.4 |                8.1 |      96.5 |  306.3 |||||||
+| XL      |         88.4 |                8.1 |      96.5 |  306.3 |68.71|74.24|76.36|63.42|68.17|70.38|
 | 2XL     |        311.5 |               60.7 |     372.2 | 1173.6 |-|-|-|-|-|-|
 | 3XL     |        853.7 |              106.8 |     960.5 | 3043.2 |72.19|76.80|78.65|70.81|74.50|76.48|
 
@@ -777,7 +798,7 @@ The script applies sigmoid to class-0 logits, converts normalized `[x1,y1,x2,y2]
 LINEAE is distributed under the root [Apache License 2.0](LICENSE).
 
 ## Cited / Acknowledgement
-- https://github.com/SebastianJanampa/LINEA
+- https://github.com/SebastianJanampa/LINEA - Apache License 2.0
   ```bibtex
   @misc{janampa2025linea,
     title={LINEA: Fast and Accurate Line Detection Using Scalable Transformers},
@@ -789,7 +810,7 @@ LINEAE is distributed under the root [Apache License 2.0](LICENSE).
     url={https://arxiv.org/abs/2505.16264},
   }
   ```
-- https://github.com/Peterande/D-FINE
+- https://github.com/Peterande/D-FINE - Apache License 2.0
   ```bibtex
   @misc{peng2024dfine,
     title={D-FINE: Redefine Regression Task in DETRs as Fine-grained Distribution Refinement},
@@ -800,7 +821,7 @@ LINEAE is distributed under the root [Apache License 2.0](LICENSE).
     primaryClass={cs.CV}
   }
   ```
-- https://github.com/facebookresearch/dinov3
+- https://github.com/facebookresearch/dinov3 - DINOv3 License
   ```bibtex
   @misc{simeoni2025dinov3,
     title={{DINOv3}},
@@ -812,7 +833,30 @@ LINEAE is distributed under the root [Apache License 2.0](LICENSE).
     url={https://arxiv.org/abs/2508.10104},
   }
   ```
-- https://github.com/PINTO0309/gazelle-dinov3
+- https://github.com/huangkuns/wireframe - MIT License
+  ```bibtex
+  @InProceedings{wireframe_cvpr18,
+    author = {Kun Huang and Yifan Wang and Zihan Zhou and Tianjiao Ding and Shenghua Gao and Yi Ma},
+    title = {Learning to Parse Wireframes in Images of Man-Made Environments},
+    booktitle = {CVPR},
+    month = {June},
+    year = {2018}
+  }
+  ```
+- https://www.elderlab.yorku.ca/resources/york-urban-line-segment-database-information/
+  ```bibtex
+  @Inbook{Denis2008,
+    author="Denis, Patrick and Elder, James H. and Estrada, Francisco J.",
+    title="Efficient Edge-Based Methods for Estimating Manhattan Frames in Urban Imagery",
+    bookTitle="Computer Vision -- ECCV 2008: 10th European Conference on Computer Vision, Marseille, France, October 12-18, 2008, Proceedings, Part II",
+    year="2008",
+    publisher="Springer Berlin Heidelberg",
+    pages="197--210",
+    isbn="978-3-540-88688-4",
+    doi="10.1007/978-3-540-88688-4_15"
+  }
+  ```
+- https://github.com/PINTO0309/gazelle-dinov3 - MIT License
   ```bibtex
   @software{Hyodo_2025_gazelle_dinov3,
     author    = {Katsuya Hyodo},
