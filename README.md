@@ -14,6 +14,13 @@ LINEAE (**LINEA E**nhanced) is an experimental successor to [LINEA](https://gith
 
   https://github.com/user-attachments/assets/7ef0788c-a1cf-4030-8b89-258551c625ed
 
+- LINEAE-3XL ONNX (3.8 GB) + TensorRT FP16 + RTX3070
+  - To detect screws, it will likely be necessary to augment the dataset with data other than furniture.
+  - Since some detections are being made, it is immediately apparent that there is an overwhelming lack of data diversity.
+  - A key insight gained from this experiment is that data diversity is extremely important; the architecture does not matter at all.
+
+  https://github.com/user-attachments/assets/60cd5dcf-3319-4267-abb7-21fdaabd68f6
+
 ## Setup
 
 The Python version and dependencies are pinned in `pyproject.toml`.
