@@ -16,6 +16,9 @@ source .venv/bin/activate
 ```
 
 ## Demo
+
+- https://github.com/PINTO0309/LINEAE/releases/tag/weights
+
 ```bash
 python demo_lineae.py \
 --input 0 \
