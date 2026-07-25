@@ -2,7 +2,17 @@
 
 LINEAE (**LINEA E**nhanced) is an experimental successor to [LINEA](https://github.com/SebastianJanampa/LINEA) aimed at improving both line detection accuracy and inference speed. It keeps the LINEA Wireframe/YorkUrban data and detector semantics, and adds selectable HGNetV2/DINOv3 backbones, progressive unfreezing, reproducible resume, XL-to-smaller line-set distillation, an optional qualified-X teacher cascade, EMA, projected feature KD/intermediate-block fusion, exact-input teacher caching, memory-efficient SDPA for every DINO variant, eval-only versioned RoPE caching, allocation-light decoder broadcasts, bounded multi-scale anchor/position caching, and deployment benchmarks.
 
-https://github.com/user-attachments/assets/008f5a87-0411-4599-b699-45d163121d9c
+- LINEAE-A ONNX (1.9 MB) + TensorRT FP16 + RTX3070
+
+  https://github.com/user-attachments/assets/11627445-83cf-4f8d-a901-614378b18c96
+
+- LINEAE-XL ONNX (388.2 MB) + TensorRT FP16 + RTX3070
+
+  https://github.com/user-attachments/assets/008f5a87-0411-4599-b699-45d163121d9c
+
+- LINEAE-3XL ONNX (3.8 GB) + TensorRT FP16 + RTX3070
+
+  https://github.com/user-attachments/assets/7ef0788c-a1cf-4030-8b89-258551c625ed
 
 ## Setup
 
