@@ -23,6 +23,7 @@ The following exact counts are produced from each committed default config with 
 **I am not interested in the performance race among architectures; consequently, I do not use appropriate data when evaluating their performance. Specifically, I combine the Wireframe and YorkUrban datasets—datasets characterized by extremely limited training data and a lack of diversity. Therefore, please note that the evaluation scores from `A` to `3XL` in the table below serve only as a guide to model performance. It is entirely meaningless to use the scores in the table below for performance comparisons with existing implementations presented in past research papers.**
 
 - WF: Wireframe, YU: YorkUrban
+- [LINEAE model weights or ONNX files](https://github.com/PINTO0309/LINEAE/releases/tag/weights)
 
 | Var | Backbone<br>(M) | Head<br>(M) | Total<br>(M) | GFLOPs | WF<br>AP<sup>5</sup> | 　<br>AP<sup>10</sup> | 　<br>AP<sup>15</sup> | YU<br>AP<sup>5</sup> | 　<br>AP<sup>10</sup> | 　<br>AP<sup>15</sup> |
 | :-----: | -----------: | -----------------: | --------: | -----: | -------------: | --------------: | --------------: | -------------: | --------------: | --------------: |
