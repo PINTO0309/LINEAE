@@ -78,6 +78,7 @@ DISTILL_EPOCHS = {
     "L": 40,
     "X": 35,
     "XL": 36,
+    "2XL": 50,
 }
 
 
@@ -329,7 +330,7 @@ def test_every_variant_preserves_detector_and_topk_outputs_after_fused_deploy(va
 
 
 @pytest.mark.parametrize(
-    "variant", ["A", "F", "P", "N", "T", "S", "M", "L", "X", "XL"]
+    "variant", ["A", "F", "P", "N", "T", "S", "M", "L", "X", "XL", "2XL"]
 )
 def test_distillation_configs_are_enabled_and_require_qualified_teacher(variant, tmp_path):
     config = SLConfig.fromfile(f"configs/lineae/distill/lineae_{variant.lower()}.py")
@@ -359,8 +360,11 @@ def test_no_kd_does_not_require_or_construct_teacher(tmp_path):
     assert criterion is None
 
 
-def test_xl_distillation_uses_3xl_teacher():
-    config = SLConfig.fromfile("configs/lineae/distill/lineae_xl.py")
+@pytest.mark.parametrize("variant", ["XL", "2XL"])
+def test_large_distillation_uses_3xl_teacher(variant):
+    config = SLConfig.fromfile(
+        f"configs/lineae/distill/lineae_{variant.lower()}.py"
+    )
 
     assert config.distill_teacher_config == "configs/lineae/lineae_3xl.py"
     assert config.distill_teacher_checkpoint == "ckpts/lineae_3xl_teacher.pth"
@@ -520,7 +524,7 @@ def test_wide_multilevel_accuracy_head_runs_small_forward_and_backward():
 
 
 @pytest.mark.parametrize(
-    "variant", ["A", "F", "P", "N", "T", "S", "M", "L", "X", "XL"]
+    "variant", ["A", "F", "P", "N", "T", "S", "M", "L", "X", "XL", "2XL"]
 )
 def test_no_kd_and_kd_training_step_semantics_match(variant):
     baseline = SLConfig.fromfile(f"configs/lineae/lineae_{variant.lower()}.py")
@@ -546,7 +550,7 @@ def test_capacity_aware_epoch_budgets_match_configs_and_readme(variant):
     assert no_kd_epochs == NO_KD_EPOCHS[variant]
 
     no_kd_steps = f"{no_kd_epochs * 625:,}"
-    if variant in {"2XL", "3XL"}:
+    if variant == "3XL":
         expected_row = (
             variant,
             f"`{no_kd_path}`",
@@ -627,6 +631,7 @@ def test_readme_documents_dino_recipe_fully_unfrozen_horizon(label, path):
     "label,path,fully_unfrozen_epoch",
     [
         ("2XL no-KD teacher candidate", "configs/lineae/lineae_2xl.py", 0),
+        ("2XL 3XL-teacher KD", "configs/lineae/distill/lineae_2xl.py", 0),
         ("3XL no-KD teacher candidate", "configs/lineae/lineae_3xl.py", 0),
     ],
 )
