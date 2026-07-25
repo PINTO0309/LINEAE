@@ -74,6 +74,53 @@ rm -f data/*.zip
 
 The authoritative mapping, including exact bootstrap filenames, is in `models/lineae/variants.py`.
 
+## Training
+
+<details><summary>scripts</summary>
+
+```bash
+##### No distillation
+VARIANT=s
+ python main.py \
+-c "configs/lineae/lineae_${VARIANT}.py" \
+--coco_path data/wireframe_processed \
+--device cuda \
+--amp \
+--num_workers 8 \
+--seed 42 \
+--options \
+output_dir="outputs/lineae_${VARIANT}-nokd-full-unfreeze-seed42" \
+progressive_unfreeze=False \
+backbone_trainable_layers=0 \
+initial_freeze_epochs=0 \
+unfreeze_interval=0 \
+use_checkpoint=False
+
+##### distillation
+VARIANT=s
+python main.py \
+-c "configs/lineae/distill/lineae_${VARIANT}.py" \
+--init-checkpoint outputs/lineae_${VARIANT}-nokd-full-unfreeze-seed42/checkpoint_best.pth \
+--coco_path data/wireframe_processed \
+--device cuda \
+--amp \
+--num_workers 8 \
+--seed 42 \
+--ensemble \
+--options \
+output_dir="outputs/lineae_${VARIANT}-distill-full-unfreeze-seed42" \
+progressive_unfreeze=False \
+backbone_trainable_layers=0 \
+initial_freeze_epochs=0 \
+unfreeze_interval=0 \
+use_checkpoint=False \
+distill_teacher_config=configs/lineae/lineae_3xl.py \
+distill_teacher_checkpoint=outputs/lineae_3xl-nokd-full-unfreeze-seed42-wide/checkpoint_best.pth \
+distill_allow_unqualified_teacher=True
+```
+
+</details>
+
 ## Parameter inventory
 
 The following exact counts are produced from each committed default config with pretrained loading disabled and after `model.deploy()`, matching the graph used by the Torch/ONNX/TensorRT benchmarks. `Backbone` means `model.backbone`: for DINO variants it includes the Simple Feature Pyramid (SFP), and for A/F/P it includes the efficient synthetic P5. `Head` is the hybrid encoder plus decoder. Default output-KD adds no student parameters; optional feature-KD projections are training-only and are removed by `deploy()`.
