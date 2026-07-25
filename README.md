@@ -83,6 +83,10 @@ The following exact counts are produced from each committed default config with 
 
 `M` is decimal millions (`1 M = 1,000,000` parameters). GFLOPs are the batch-1 forward-operation count reported by the locked `calflops` implementation after `model.deploy()` at each variant's canonical input size: 320 for A, 416 for F, and 640 for P through 3XL. One multiply-accumulate contributes two FLOPs, with other counted operations added separately. Values are rounded to one decimal place; GFLOPs describe graph complexity rather than measured hardware throughput, and the parameter regression test retains the exact integer counts. The 2XL/3XL graph is reconstructed and executed on meta tensors for this accounting, avoiding parameter duplication and real multi-teraflop CPU computation while retaining the same module hooks and shapes.
 
+The publicly released dataset is of extremely poor quality and is believed to be causing overfitting. Since the performance differences between architectures are negligible, please approach the data creation process more seriously. As it stands, you are failing to unlock even 10% of the architecture's potential.
+
+<img width="1280" height="672" alt="89_image_89" src="https://github.com/user-attachments/assets/ba87eadc-7f6f-47a1-a78d-b1b290e33789" />
+
 ### A/F/P/N scaling contract
 
 A, F, P, and N now increase strictly in exact deploy parameter count, MACs, and the reference canonical-input latency. The old dense 3x3 A/F/P synthetic P5 alone contained up to 2.36M parameters, making P larger than N. It has been replaced by a 2x2 average downsample followed by a learned 1x1 channel mixer, BatchNorm, and ReLU. N retains HGNetV2-B0's larger native stage 4. To keep real GPU latency from being dominated by the same detector head at every small size, queries scale as 600/800/1100/1200; A additionally uses two decoder layers while F/P/N use three. All variants retain top-300 deployment output. This preserves the three-level `(stride 8, 16, 32)` feature contract while producing the intended A < F < P < N order.
