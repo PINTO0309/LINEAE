@@ -49,12 +49,12 @@ https://github.com/SebastianJanampa/LINEA#data-preparation
 
 ```bash
 curl -fL \
-  -o data/wireframe_processed.zip \
-  https://github.com/SebastianJanampa/storage/releases/download/v1.0.0/wireframe_processed.zip
+-o data/wireframe_processed.zip \
+https://github.com/SebastianJanampa/storage/releases/download/v1.0.0/wireframe_processed.zip
 
 curl -fL \
-  -o data/york_processed.zip \
-  https://github.com/SebastianJanampa/storage/releases/download/v1.0.0/york_processed.zip
+-o data/york_processed.zip \
+https://github.com/SebastianJanampa/storage/releases/download/v1.0.0/york_processed.zip
 
 unzip data/wireframe_processed.zip -d data
 unzip data/york_processed.zip -d data
