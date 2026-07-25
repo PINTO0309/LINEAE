@@ -230,3 +230,4 @@ data/test_render/
 outputs/
 runs/
 *.engine
+*.onnx.data
