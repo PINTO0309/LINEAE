@@ -857,6 +857,15 @@ LINEAE is distributed under the root [Apache License 2.0](LICENSE).
     url={https://arxiv.org/abs/2505.16264},
   }
   ```
+- https://github.com/Intellindust-AI-Lab/DEIMv2 - Apache License 2.0
+  ```bibtex
+  @article{huang2025deimv2,
+    title={Real-Time Object Detection Meets DINOv3},
+    author={Huang, Shihua and Hou, Yongjie and Liu, Longfei and Yu, Xuanlong and Shen, Xi},
+    journal={arXiv},
+    year={2025}
+  }
+  ```
 - https://github.com/Peterande/D-FINE - Apache License 2.0
   ```bibtex
   @misc{peng2024dfine,
