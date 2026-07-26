@@ -147,7 +147,7 @@ The following exact counts are produced from each committed default config with 
 - WF: Wireframe, YU: YorkUrban
 - [LINEAE model weights or ONNX files](https://github.com/PINTO0309/LINEAE/releases/tag/weights)
 - `3XL` is the teacher model.
-- Sizes A through `2XL` are the "Distilled" model.
+- Sizes `A` through `2XL` are the "Distilled" model.
 
 | Var | Backbone<br>(M) | Head<br>(M) | Total<br>(M) | GFLOPs | WF<br>AP<sup>5</sup> | 　<br>AP<sup>10</sup> | 　<br>AP<sup>15</sup> | YU<br>AP<sup>5</sup> | 　<br>AP<sup>10</sup> | 　<br>AP<sup>15</sup> |
 | :-----: | -----------: | -----------------: | --------: | -----: | -------------: | --------------: | --------------: | -------------: | --------------: | --------------: |
