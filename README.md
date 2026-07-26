@@ -110,6 +110,120 @@ The authoritative mapping, including exact bootstrap filenames, is in `models/li
 
 ## Training
 
+`--ensemble` always adds the YorkUrban train and validation splits to Wireframe
+training. It also scans the directory containing `--coco_path` and automatically
+adds every compatible sibling dataset in normalized dataset-name order. A sibling
+is considered a dataset when both `train2017/` and
+`annotations/lines_train2017.json` exist. Its train split is added to training;
+an optional complete `val2017/` plus `annotations/lines_val2017.json` pair is
+evaluated separately and is never added to training. Directories with neither
+train component are ignored, while a partial split, missing referenced image,
+invalid COCO structure, or invalid line coordinate stops preflight.
+
+Auto-discovered annotations use LINEAE's `[x,y,dx,dy]` line format. The optional
+top-level `line_format`, when present, must be `xy_dxdy_v1`. Raw Screws annotations
+store absolute endpoints and must be converted once to the delta format before
+training:
+
+```bash
+python data/convert_screws_annotations.py \
+  --input data/screws_processed/annotations/lines_train2017.json \
+  --output data/screws_processed/annotations/lines_train2017.json \
+  --overwrite
+
+python data/convert_screws_annotations.py \
+  --input data/screws_processed/annotations/lines_val2017.json \
+  --output data/screws_processed/annotations/lines_val2017.json \
+  --image-dir data/screws_processed/val2017 \
+  --overwrite
+```
+
+Conversion atomically replaces each source annotation after full validation.
+The converted `data/screws_processed` directory is then found automatically; no
+Screws-specific training CLI option is required.
+
+### 2XL fine-tuning with auto-discovered datasets
+
+`configs/lineae/finetune/lineae_2xl_finetune.py` starts a fresh 12-epoch run from
+completed 2XL inference weights. It trains on Wireframe train, YorkUrban train/val,
+and every auto-discovered train split in their natural proportions. With the
+current Screws dataset this is 5,447 images, and Wireframe val and Screws val are
+evaluated separately every epoch. Pass
+`--selection-best-dataset screws` to select `checkpoint_best.pth` by
+`screws_sap10`; Screws metrics are logged with a `screws_` prefix. Omitting the
+option retains the global `wireframe` default and selects by `sap10`. The effective
+batch remains eight (physical batch four, accumulation two),
+with a one-epoch/681-step warm-up, a `2e-5` detector LR, a `1e-6` DINO-core LR,
+and an 8,172-step cosine horizon ending at `1e-7`. Distillation and EMA are disabled.
+
+The full 2XL model, optimizer, and backward pass are not suitable for an 8 GB GPU.
+On such a development host, run only the lightweight config, annotation, provenance,
+and TinyModel tests. The CUDA commands below are execution recipes for a separate
+high-memory training host and are not part of the local test procedure.
+
+Evaluate the initialization baseline on both validation datasets before training:
+
+```bash
+mkdir -p outputs/evaluations
+
+uv run --locked python tools/evaluate_checkpoint.py \
+-c configs/lineae/finetune/lineae_2xl_finetune.py \
+--checkpoint outputs/lineae_2xl-distill-full-unfreeze-seed42/checkpoint_best.pth \
+--dataset wireframe=data/wireframe_processed \
+--dataset screws=data/screws_processed \
+--device cuda --amp --batch-size 4 --num-workers 8 \
+--output outputs/evaluations/lineae_2xl-finetune-baseline.json
+```
+
+Start the fresh fine-tuning run. `--init-checkpoint` loads only the selected model
+weights; optimizer, scheduler, GradScaler, source epoch, and distillation state are
+not restored:
+
+```bash
+uv run --locked python main.py \
+-c configs/lineae/finetune/lineae_2xl_finetune.py \
+--coco_path data/wireframe_processed \
+--ensemble \
+--selection-best-dataset screws \
+--init-checkpoint outputs/lineae_2xl-distill-full-unfreeze-seed42/checkpoint_best.pth \
+--device cuda --amp --num_workers 8 --seed 42
+```
+
+Resume only from the new run's full-state `checkpoint.pth`, with the same config,
+datasets, seed, and runtime settings. Do not repeat `--init-checkpoint`:
+
+```bash
+uv run --locked python main.py \
+-c configs/lineae/finetune/lineae_2xl_finetune.py \
+--coco_path data/wireframe_processed \
+--ensemble \
+--selection-best-dataset screws \
+--resume outputs/lineae_2xl-finetune-seed42/checkpoint.pth \
+--device cuda --amp --num_workers 8 --seed 42
+```
+
+After completion, evaluate both `checkpoint_best.pth` and the final
+`checkpoint.pth`; use distinct `--output` names so the Screws-selected best and
+latest behavior remain directly comparable:
+
+```bash
+uv run --locked python tools/evaluate_checkpoint.py \
+-c configs/lineae/finetune/lineae_2xl_finetune.py \
+--checkpoint outputs/lineae_2xl-finetune-seed42/checkpoint_best.pth \
+--dataset wireframe=data/wireframe_processed \
+--dataset screws=data/screws_processed \
+--device cuda --amp --batch-size 4 --num-workers 8 \
+--output outputs/evaluations/lineae_2xl-finetune-best.json
+
+uv run --locked python tools/evaluate_checkpoint.py \
+-c configs/lineae/finetune/lineae_2xl_finetune.py \
+--checkpoint outputs/lineae_2xl-finetune-seed42/checkpoint.pth \
+--dataset wireframe=data/wireframe_processed \
+--dataset screws=data/screws_processed \
+--device cuda --amp --batch-size 4 --num-workers 8 \
+--output outputs/evaluations/lineae_2xl-finetune-latest.json
+```
+
 <details><summary>scripts</summary>
 
 ```bash
@@ -346,7 +460,7 @@ The loss logger is dynamic: if a non-default criterion emits `loss_lmap`, `loss_
 | `Distillation/match_weight_sum` | Sum of accepted confidence weights after applying `distill_confidence_power`; this exposes the effective KD mass before GT-count normalization. |
 | `Distillation/overhead_ms` | Rank-0 host elapsed time from starting teacher inference through return of the KD criterion, including matching and its GPU-to-CPU synchronization; it is a per-microbatch diagnostic, not a synchronized end-to-end GPU benchmark. |
 
-Validation scalars use the zero-based epoch number as their x-axis and are normally written after each completed epoch when evaluation is enabled. A bounded mid-epoch run can also write them at the current epoch index unless `--skip_eval` is set. Validation losses are dataset averages after DDP synchronization; sAP values are percentages, so higher is better. Each validation pass reports two explicitly labelled protocols: official-compatible sAP over all `num_queries` predictions and deployment sAP over the class-0 top `num_select` predictions. The console prints both groups, JSONL and TensorBoard use explicit `official_sap*` and `deploy_sap*` names, and the canonical `sap*` aliases mean official all-query sAP. `checkpoint_best.pth` is selected by canonical official `sap10` unless `selection_metric` is explicitly changed.
+Validation scalars use the zero-based epoch number as their x-axis and are normally written after each completed epoch when evaluation is enabled. A bounded mid-epoch run can also write them at the current epoch index unless `--skip_eval` is set. Validation losses are dataset averages after DDP synchronization; sAP values are percentages, so higher is better. Each validation pass reports two explicitly labelled protocols: official-compatible sAP over all `num_queries` predictions and deployment sAP over the class-0 top `num_select` predictions. The console prints both groups, JSONL and TensorBoard use explicit `official_sap*` and `deploy_sap*` names, and the canonical `sap*` aliases mean official all-query sAP. `checkpoint_best.pth` uses canonical official `sap10` on Wireframe by default. `--selection-best-dataset NAME` selects an auto-discovered dataset with a complete validation split instead; its metric key is namespaced, for example `screws_sap10`. The underlying sAP kind remains configurable through `selection_metric`.
 
 | Validation tag | Meaning |
 | --- | --- |
@@ -363,7 +477,7 @@ Validation scalars use the zero-based epoch number as their x-axis and are norma
 
 ### Best-epoch validation renders
 
-After a completed training epoch improves `selection_metric`, rank 0 uses the same normally selected or EMA evaluation model to render the first 10 validation samples. Each PNG shows every ground-truth line in green on the left and class-0 predictions in red on the right. Predictions must have score at least `0.3` and are limited to the best 100 lines. The fixed sample order makes changes directly comparable between best epochs. Ordinary non-best epochs, partial epochs, `--skip_eval`, and standalone `--eval` do not render images.
+After a completed training epoch improves the resolved selection metric, rank 0 uses the same normally selected or EMA evaluation model to render the first 10 samples from the selected validation dataset. Each PNG shows every ground-truth line in green on the left and class-0 predictions in red on the right. Predictions must have score at least `0.3` and are limited to the best 100 lines. The fixed sample order makes changes directly comparable between best epochs. Ordinary non-best epochs, partial epochs, `--skip_eval`, and standalone `--eval` do not render images.
 
 Images are written atomically to `outputs/<run>/validation_renders/best_epoch_XXXX/NN_image_<image_id>.png`. Only directories matching `best_epoch_XXXX` participate in retention, and the newest 10 best-update epochs are kept across both uninterrupted and resumed training. A rendering failure occurs after `checkpoint_best.pth` is safely written, does not stop training, and is reported through the console plus `validation_render_error` in `log.txt`; successful epochs record `validation_render_dir`.
 
@@ -382,13 +496,17 @@ python main.py -c configs/lineae/probes/lineae_s.py \
 --options output_dir=outputs/lineae_s_smoke
 ```
 
-Normal runs omit the bounded/skip flags. Every output directory receives a resolved config, run manifest, annotation/checkpoint hashes, exact backbone load report, TensorBoard events, JSONL log, atomic latest full-state `checkpoint.pth`, and validation-sAP10-selected `checkpoint_best.pth`. Numbered periodic snapshots such as `checkpoint0009.pth` and `checkpoint0019.pth` are disabled by the shared `save_checkpoint_interval=0` default, preventing redundant storage use while retaining exact resume and best-model selection. Set a positive interval explicitly through `--options` only when archival snapshots are required; existing numbered files are not deleted automatically. If `--max_train_steps` stops inside an epoch, the saved diagnostic checkpoint is marked `epoch_complete=False`; it cannot be resumed or promoted as a teacher. Resume always starts after a completed epoch, so it never silently skips the unseen remainder of a bounded probe.
+Normal runs omit the bounded/skip flags. Every output directory receives a resolved config, run manifest, annotation/checkpoint hashes, exact backbone load report, TensorBoard events, JSONL log, atomic latest full-state `checkpoint.pth`, and resolved-validation-metric-selected `checkpoint_best.pth`. Numbered periodic snapshots such as `checkpoint0009.pth` and `checkpoint0019.pth` are disabled by the shared `save_checkpoint_interval=0` default, preventing redundant storage use while retaining exact resume and best-model selection. Set a positive interval explicitly through `--options` only when archival snapshots are required; existing numbered files are not deleted automatically. If `--max_train_steps` stops inside an epoch, the saved diagnostic checkpoint is marked `epoch_complete=False`; it cannot be resumed or promoted as a teacher. Resume always starts after a completed epoch, so it never silently skips the unseen remainder of a bounded probe.
 
 ### Exact epoch-boundary resume
 
 `--resume` is a full training-state resume when given the latest `checkpoint.pth`; previously created completed-epoch numbered checkpoints remain loadable even though new ones are disabled by default. Resume strict-loads every model parameter/buffer and restores AdamW state, LR scheduler, warm-up scheduler, GradScaler, EMA, best metric/epoch, global optimizer step, progressive-unfreeze position, and Python/NumPy/Torch/CUDA RNG state for each distributed rank. The frozen teacher is not duplicated into every student checkpoint; its qualified artifact path and SHA-256 are bound by the saved config and revalidated. The current checkpoint schema requires every one of those state fields, and a missing or unexpected scheduler/warm-up/scaler/EMA state fails before any model parameter is mutated rather than silently continuing with a fresh component.
 
-Use the identical config, seed, worker/world-size settings, AMP mode, and output directory. For example:
+Use the identical config, seed, worker/world-size settings, AMP mode, output
+directory, and `--selection-best-dataset` value. Ensemble resume also compares the
+entire auto-discovery manifest, so adding/removing a sibling dataset or changing
+its root, annotation hash, split, or sample count requires a new run (a completed
+older checkpoint may still be used through `--init-checkpoint`). For example:
 
 ```bash
 uv run --locked python main.py \

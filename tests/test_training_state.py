@@ -14,6 +14,7 @@ from main import (
     create,
     get_args_parser,
     metric_improved,
+    prefix_validation_stats,
     validate_checkpoint_cli_args,
 )
 from models.lineae.backbones.base import unwrap_state_dict
@@ -59,6 +60,36 @@ class FeatureTinyModel(TinyModel):
         )
 
 
+def test_2xl_finetune_optimizer_groups_use_tiny_model_only():
+    config = SLConfig.fromfile(
+        "configs/lineae/finetune/lineae_2xl_finetune.py"
+    )
+    optimizer = build_adamw_optimizer(
+        config,
+        TinyModel(),
+        torch.device("cpu"),
+    )
+
+    assert [group["lr"] for group in optimizer.param_groups] == [
+        1e-6,
+        1e-6,
+        2e-5,
+        2e-5,
+    ]
+    assert [group["weight_decay"] for group in optimizer.param_groups] == [
+        1e-4,
+        0.0,
+        0.0,
+        1e-4,
+    ]
+    config.optimizer_steps_per_epoch = 681
+    scheduler = build_lr_scheduler(config, optimizer)
+    assert config.lr_scheduler_total_units_resolved == 8172
+    assert config.lr_scheduler_warmup_units_resolved == 681
+    assert config.lr_scheduler_post_warmup_units_resolved == 7492
+    assert scheduler.T_max == 7492
+
+
 @pytest.mark.parametrize(
     "config_path",
     [
@@ -69,6 +100,7 @@ class FeatureTinyModel(TinyModel):
         "configs/lineae/distill/lineae_t.py",
         "configs/lineae/lineae_xl.py",
         "configs/lineae/lineae_2xl.py",
+        "configs/lineae/finetune/lineae_2xl_finetune.py",
         "configs/lineae/lineae_3xl.py",
         "configs/lineae/probes/lineae_s.py",
     ],
@@ -129,11 +161,21 @@ def test_init_checkpoint_cli_is_distinct_from_resume_and_eval():
     defaults = parser.parse_args(["-c", "config.py"])
     assert defaults.ensemble is False
     assert defaults.ensemble_york_path == "data/york_processed"
+    assert defaults.selection_best_dataset == "wireframe"
     ensemble_args = parser.parse_args(
-        ["-c", "config.py", "--ensemble", "--ensemble-york-path", "/data/york"]
+        [
+            "-c",
+            "config.py",
+            "--ensemble",
+            "--ensemble-york-path",
+            "/data/york",
+            "--selection-best-dataset",
+            "screws",
+        ]
     )
     assert ensemble_args.ensemble is True
     assert ensemble_args.ensemble_york_path == "/data/york"
+    assert ensemble_args.selection_best_dataset == "screws"
     validate_checkpoint_cli_args(ensemble_args)
     ensemble_init_args = parser.parse_args(
         [
@@ -271,13 +313,19 @@ def test_ensemble_dataset_provenance_is_written_to_records_and_checkpoint(
     primary_annotation = tmp_path / "primary_train.json"
     york_train_annotation = tmp_path / "york_train.json"
     york_val_annotation = tmp_path / "york_val.json"
+    screws_train_annotation = tmp_path / "screws_train.json"
+    screws_val_annotation = tmp_path / "screws_val.json"
     primary_annotation.write_bytes(b"primary")
     york_train_annotation.write_bytes(b"york-train")
     york_val_annotation.write_bytes(b"york-val")
+    screws_train_annotation.write_bytes(b"screws-train")
+    screws_val_annotation.write_bytes(b"screws-val")
     york_hashes = {
         "train": sha256_file(york_train_annotation),
         "val": sha256_file(york_val_annotation),
     }
+    screws_hash = sha256_file(screws_train_annotation)
+    screws_val_hash = sha256_file(screws_val_annotation)
     sources = [
         {
             "name": "primary_train",
@@ -305,6 +353,16 @@ def test_ensemble_dataset_provenance_is_written_to_records_and_checkpoint(
             "annotation_sha256": york_hashes["val"],
             "samples": 102,
         },
+        {
+            "name": "screws_train",
+            "dataset_name": "screws",
+            "split": "train",
+            "root": str(tmp_path),
+            "image_dir": str(tmp_path),
+            "annotation_file": str(screws_train_annotation),
+            "annotation_sha256": screws_hash,
+            "samples": 345,
+        },
     ]
     args = SimpleNamespace(
         coco_path=str(tmp_path / "wireframe"),
@@ -325,12 +383,42 @@ def test_ensemble_dataset_provenance_is_written_to_records_and_checkpoint(
         amp=False,
         device="cpu",
         ensemble=True,
+        ensemble_dataset_schema="wireframe_york_auto_discovery_v3",
         ensemble_york_path=str(tmp_path),
         ensemble_annotation_sha256=york_hashes,
         ensemble_split_samples={"train": 0, "val": 102},
-        ensemble_training_sample_count=102,
-        training_dataset_sample_count=5102,
+        ensemble_discovery_root=str(tmp_path),
+        ensemble_validation_sources=[{
+            "name": "screws_val",
+            "dataset_name": "screws",
+            "split": "val",
+            "root": str(tmp_path),
+            "image_dir": str(tmp_path),
+            "annotation_file": str(screws_val_annotation),
+            "annotation_sha256": screws_val_hash,
+            "samples": 55,
+        }],
+        ensemble_discovered_datasets=[{
+            "name": "screws",
+            "root": str(tmp_path),
+            "train": sources[3],
+            "val": {
+                "name": "screws_val",
+                "dataset_name": "screws",
+                "split": "val",
+                "root": str(tmp_path),
+                "image_dir": str(tmp_path),
+                "annotation_file": str(screws_val_annotation),
+                "annotation_sha256": screws_val_hash,
+                "samples": 55,
+            },
+        }],
+        ensemble_training_sample_count=447,
+        training_dataset_sample_count=5447,
         training_dataset_sources=sources,
+        selection_metric="sap10",
+        selection_best_dataset="screws",
+        selection_metric_resolved="screws_sap10",
     )
     model = TinyModel()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
@@ -346,16 +434,42 @@ def test_ensemble_dataset_provenance_is_written_to_records_and_checkpoint(
 
     manifest = json.loads((output_dir / "run_manifest.json").read_text())
     assert manifest["dataset"]["ensemble"] is True
-    assert manifest["dataset"]["training_samples"] == 5102
+    assert manifest["dataset"]["ensemble_schema"] == (
+        "wireframe_york_auto_discovery_v3"
+    )
+    assert manifest["dataset"]["discovery_root"] == str(tmp_path)
+    assert manifest["dataset"]["discovered_datasets"][0]["name"] == "screws"
+    assert manifest["dataset"]["training_samples"] == 5447
     assert [source["samples"] for source in manifest["dataset"]["training_sources"]] == [
         5000,
         0,
         102,
+        345,
     ]
     assert manifest["dataset"]["training_sources"][2]["annotation"]["sha256"] == (
         york_hashes["val"]
     )
+    assert manifest["dataset"]["training_sources"][3]["annotation"]["sha256"] == (
+        screws_hash
+    )
+    assert manifest["dataset"]["validation_sources"] == [{
+        "name": "screws_val",
+        "dataset_name": "screws",
+        "split": "val",
+        "root": str(tmp_path.resolve()),
+        "image_dir": str(tmp_path.resolve()),
+        "annotation": {
+            "path": str(screws_val_annotation.resolve()),
+            "exists": True,
+            "size_bytes": screws_val_annotation.stat().st_size,
+            "sha256": screws_val_hash,
+        },
+        "samples": 55,
+    }]
     assert manifest["training"]["drop_last"] is False
+    assert manifest["training"]["selection_best_dataset"] == "screws"
+    assert manifest["training"]["selection_metric"] == "sap10"
+    assert manifest["training"]["selection_metric_resolved"] == "screws_sap10"
     checkpoint = build_training_checkpoint(
         model=model,
         optimizer=optimizer,
@@ -368,12 +482,25 @@ def test_ensemble_dataset_provenance_is_written_to_records_and_checkpoint(
         repo_root=tmp_path,
     )
     assert checkpoint["config"]["ensemble"] is True
+    assert checkpoint["config"]["ensemble_dataset_schema"] == (
+        "wireframe_york_auto_discovery_v3"
+    )
     assert checkpoint["config"]["ensemble_annotation_sha256"] == york_hashes
     assert checkpoint["config"]["ensemble_split_samples"] == {
         "train": 0,
         "val": 102,
     }
-    assert checkpoint["config"]["training_dataset_sample_count"] == 5102
+    assert checkpoint["config"]["ensemble_discovery_root"] == str(tmp_path)
+    assert checkpoint["config"]["ensemble_discovered_datasets"][0]["name"] == (
+        "screws"
+    )
+    assert checkpoint["config"]["ensemble_validation_sources"][0][
+        "annotation_sha256"
+    ] == screws_val_hash
+    assert checkpoint["config"]["selection_best_dataset"] == "screws"
+    assert checkpoint["config"]["selection_metric_resolved"] == "screws_sap10"
+    assert checkpoint["config"]["ensemble_training_sample_count"] == 447
+    assert checkpoint["config"]["training_dataset_sample_count"] == 5447
 
 
 def test_backbone_checkpoint_initialization_strictly_loads_only_dino_core():
@@ -1250,6 +1377,24 @@ def test_validation_metric_selection_supports_max_min_and_rejects_nonfinite():
         metric_improved(float("nan"), 1.0, "max")
 
 
+def test_secondary_validation_metrics_support_independent_selection_key():
+    primary = {"sap10": 75.0, "official_sap10": 75.0, "loss": 1.0}
+    screws = prefix_validation_stats(
+        {"sap10": 63.0, "official_sap10": 63.0, "loss": 2.0},
+        "screws",
+    )
+    combined = {**primary, **screws}
+
+    assert combined["sap10"] == 75.0
+    assert combined["screws_sap10"] == 63.0
+    assert combined["screws_official_sap10"] == 63.0
+    assert combined["screws_loss"] == 2.0
+    assert metric_improved(combined["sap10"], 74.0, "max")
+    assert metric_improved(combined["screws_sap10"], 62.0, "max")
+    with pytest.raises(ValueError, match="must not be empty"):
+        prefix_validation_stats(primary, "")
+
+
 def test_resume_validation_covers_training_semantics_and_normalizes_sequences():
     args = SimpleNamespace(
         modelname="LINEAE",
@@ -1346,6 +1491,48 @@ def test_resume_rejects_checkpoint_before_ensemble_dataset_contract():
         validate_resume_checkpoint(checkpoint, args)
 
 
+def test_resume_rejects_v2_ensemble_dataset_schema():
+    args = SimpleNamespace(
+        eval=False,
+        ensemble=True,
+        ensemble_dataset_schema="wireframe_york_auto_discovery_v3",
+    )
+    checkpoint = _resume_checkpoint_stub(config={
+        "ensemble": True,
+        "ensemble_dataset_schema": "wireframe_york_optional_screws_v2",
+    })
+
+    with pytest.raises(ValueError, match="ensemble_dataset_schema"):
+        validate_resume_checkpoint(checkpoint, args)
+
+
+def test_resume_requires_best_dataset_selection_provenance():
+    args = SimpleNamespace(
+        eval=False,
+        selection_best_dataset="wireframe",
+        selection_metric_resolved="sap10",
+    )
+    checkpoint = _resume_checkpoint_stub(config={})
+
+    with pytest.raises(ValueError, match="best-checkpoint dataset selection"):
+        validate_resume_checkpoint(checkpoint, args)
+
+
+def test_resume_requires_complete_auto_discovery_manifest():
+    args = SimpleNamespace(
+        eval=False,
+        ensemble=True,
+        ensemble_dataset_schema="wireframe_york_auto_discovery_v3",
+    )
+    checkpoint = _resume_checkpoint_stub(config={
+        "ensemble": True,
+        "ensemble_dataset_schema": "wireframe_york_auto_discovery_v3",
+    })
+
+    with pytest.raises(ValueError, match="auto-discovery manifest"):
+        validate_resume_checkpoint(checkpoint, args)
+
+
 def test_native_p5_variant_does_not_require_synthetic_p5_schema():
     args = SimpleNamespace(synthetic_p5_schema=None)
     validate_resume_checkpoint(_resume_checkpoint_stub(config={}), args)
@@ -1360,6 +1547,11 @@ def test_native_p5_variant_does_not_require_synthetic_p5_schema():
         ("encoder_use_indices", [2], [1, 2]),
         ("encoder_num_layers", 1, 2),
         ("ensemble", True, False),
+        (
+            "ensemble_dataset_schema",
+            "wireframe_york_auto_discovery_v3",
+            "wireframe_york_v1",
+        ),
         ("ensemble_york_path", "data/york_processed", "/datasets/york"),
         (
             "ensemble_annotation_sha256",
@@ -1371,7 +1563,27 @@ def test_native_p5_variant_does_not_require_synthetic_p5_schema():
             {"train": 0, "val": 102},
             {"train": 0, "val": 101},
         ),
-        ("training_dataset_sample_count", 5102, 5101),
+        ("ensemble_discovery_root", "/datasets", "/other-datasets"),
+        (
+            "ensemble_discovered_datasets",
+            [{
+                "name": "screws",
+                "train": {"samples": 345, "annotation_sha256": "d" * 64},
+            }],
+            [{
+                "name": "screws",
+                "train": {"samples": 345, "annotation_sha256": "e" * 64},
+            }],
+        ),
+        (
+            "ensemble_validation_sources",
+            [{"dataset_name": "screws", "annotation_sha256": "f" * 64}],
+            [{"dataset_name": "screws", "annotation_sha256": "0" * 64}],
+        ),
+        ("ensemble_training_sample_count", 447, 446),
+        ("training_dataset_sample_count", 5447, 5446),
+        ("selection_best_dataset", "screws", "wireframe"),
+        ("selection_metric_resolved", "screws_sap10", "sap10"),
         ("eval_idx", 5, 2),
         ("pe_temperatureH", 20, 10),
         ("freeze_norm", False, True),

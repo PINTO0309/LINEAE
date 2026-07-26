@@ -13,6 +13,10 @@ from models.lineae.variants import VARIANTS, validate_variant_config
 from util.slconfig import SLConfig
 from util.experiment import config_fingerprint, sha256_file
 from util.profiler import stats as complexity_stats
+from util.training_state import (
+    INITIALIZATION_CRITICAL_FIELDS,
+    validate_initialization_checkpoint,
+)
 
 
 DEPLOY_PARAMETER_COUNTS = {
@@ -472,6 +476,68 @@ def test_accuracy_tier_large_recipes_use_wide_multilevel_head(
     assert config.dropout == 0.1
     assert config.num_queries == 1100
     assert config.num_select == 300
+
+
+def test_2xl_finetune_config_preserves_model_and_sets_schedule():
+    baseline = SLConfig.fromfile("configs/lineae/lineae_2xl.py")
+    distillation_source = SLConfig.fromfile(
+        "configs/lineae/distill/lineae_2xl.py"
+    )
+    finetune = SLConfig.fromfile(
+        "configs/lineae/finetune/lineae_2xl_finetune.py"
+    )
+
+    for field in INITIALIZATION_CRITICAL_FIELDS:
+        if field in baseline._cfg_dict:
+            assert getattr(finetune, field) == getattr(baseline, field)
+            assert getattr(finetune, field) == getattr(
+                distillation_source,
+                field,
+            )
+        else:
+            assert field not in finetune._cfg_dict
+
+    assert finetune.output_dir == (
+        "outputs/lineae_2xl-finetune-seed42"
+    )
+    assert finetune.training_profile == "single_gpu_96gb_ensemble_finetune"
+    assert finetune.epochs == 12
+    assert 681 * finetune.epochs == 8172
+    assert finetune.lr == 2e-5
+    assert finetune.model_parameters[0]["lr"] == 1e-6
+    assert finetune.model_parameters[1]["lr"] == 1e-6
+    assert finetune.model_parameters[1]["weight_decay"] == 0.0
+    assert finetune.lr_scheduler == "cosine"
+    assert finetune.scheduler_step_unit == "optimizer"
+    assert finetune.use_warmup is True
+    assert finetune.warmup_iters == 681
+    assert finetune.min_lr == 1e-7
+    assert finetune.batch_size_train == 4
+    assert finetune.gradient_accumulation_steps == 2
+    assert finetune.batch_size_train * finetune.gradient_accumulation_steps == 8
+    assert finetune.backbone_trainable_layers == 0
+    assert finetune.progressive_unfreeze is False
+    assert finetune.use_checkpoint is True
+    assert finetune.multi_scale_train is True
+    assert finetune.distill_weight == 0.0
+    assert finetune.distill_feature_weight == 0.0
+    assert finetune.use_ema is False
+    assert finetune.selection_metric == "sap10"
+
+    sentinel_state = {"sentinel": torch.tensor(1.0)}
+    selected = validate_initialization_checkpoint(
+        {
+            "format_version": 2,
+            "model": sentinel_state,
+            "epoch": 26,
+            "epoch_complete": True,
+            "config": distillation_source._cfg_dict.to_dict(),
+            "inference_model": "model",
+        },
+        finetune,
+    )
+    assert set(selected) == {"sentinel"}
+    assert torch.equal(selected["sentinel"], sentinel_state["sentinel"])
 
 
 def test_wide_multilevel_accuracy_head_runs_small_forward_and_backward():

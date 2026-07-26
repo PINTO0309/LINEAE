@@ -99,9 +99,14 @@ RESUME_CRITICAL_FIELDS = (
     "weight_dict",
     "coco_path",
     "ensemble",
+    "ensemble_dataset_schema",
     "ensemble_york_path",
     "ensemble_annotation_sha256",
     "ensemble_split_samples",
+    "ensemble_discovery_root",
+    "ensemble_discovered_datasets",
+    "ensemble_validation_sources",
+    "ensemble_training_sample_count",
     "training_dataset_sample_count",
     "data_aug_scales",
     "data_aug_max_size",
@@ -164,6 +169,8 @@ RESUME_CRITICAL_FIELDS = (
     "distill_temperature_steps",
     "distill_temperature_steps_resolved",
     "selection_metric",
+    "selection_best_dataset",
+    "selection_metric_resolved",
     "sap_evaluation_protocol",
     "selection_mode",
     "use_ema",
@@ -418,12 +425,41 @@ def validate_resume_checkpoint(checkpoint: Mapping[str, Any], args: Any) -> None
             "image_preprocess_schema": "OpenCV image preprocessing",
             "accuracy_head_schema": "wide multilevel accuracy-head architecture",
             "ensemble": "Wireframe plus YorkUrban training-dataset",
+            "ensemble_dataset_schema": (
+                "Wireframe plus YorkUrban plus auto-discovered training-dataset"
+            ),
+            "selection_best_dataset": "best-checkpoint dataset selection",
+            "selection_metric_resolved": "resolved best-checkpoint metric",
         }
         for field, description in required_semantic_markers.items():
             if getattr(args, field, None) and field not in saved_config:
                 raise ValueError(
                     f"resume checkpoint predates the {description} schema; "
                     "start a new run from the backbone initialization weights"
+                )
+        current_ensemble_schema = getattr(args, "ensemble_dataset_schema", None)
+        if current_ensemble_schema is not None:
+            saved_ensemble_schema = saved_config.get("ensemble_dataset_schema")
+            if saved_ensemble_schema != current_ensemble_schema:
+                raise ValueError(
+                    "resume config mismatch for ensemble_dataset_schema: "
+                    f"checkpoint={saved_ensemble_schema!r}, "
+                    f"current={current_ensemble_schema!r}"
+                )
+            required_discovery_fields = (
+                "ensemble_discovery_root",
+                "ensemble_discovered_datasets",
+                "ensemble_validation_sources",
+            )
+            missing_discovery_fields = [
+                field for field in required_discovery_fields
+                if field not in saved_config
+            ]
+            if missing_discovery_fields:
+                raise ValueError(
+                    "resume checkpoint predates the auto-discovery manifest; "
+                    f"missing config fields: {missing_discovery_fields}. Start a "
+                    "new run with --init-checkpoint"
                 )
     if checkpoint["sampler_epoch"] != checkpoint["epoch"]:
         raise ValueError(

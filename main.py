@@ -80,12 +80,23 @@ def get_args_parser():
     parser.add_argument(
         '--ensemble',
         action='store_true',
-        help='add every YorkUrban train/val sample to the training dataset',
+        help=(
+            'add YorkUrban train/val plus compatible sibling datasets discovered '
+            'next to --coco_path'
+        ),
     )
     parser.add_argument(
         '--ensemble-york-path',
         default='data/york_processed',
         help='YorkUrban dataset root used by --ensemble',
+    )
+    parser.add_argument(
+        '--selection-best-dataset',
+        default='wireframe',
+        help=(
+            'validation dataset whose selection_metric updates checkpoint_best.pth; '
+            'use wireframe or an auto-discovered dataset with a val split'
+        ),
     )
     # training parameters
     # parser.add_argument('--output_dir', default='',
@@ -206,6 +217,98 @@ def build_training_data_loader(dataset, sampler, args, loader_options):
         ),
         **loader_options,
     )
+
+
+def build_validation_data_loader(dataset, args, loader_options):
+    sampler = (
+        DistributedSampler(dataset, shuffle=False)
+        if getattr(args, 'distributed', False)
+        else torch.utils.data.SequentialSampler(dataset)
+    )
+    return DataLoader(
+        dataset,
+        args.batch_size_val,
+        sampler=sampler,
+        drop_last=False,
+        collate_fn=BatchImageCollateFunction(
+            base_size=args.eval_spatial_size[0]
+        ),
+        **loader_options,
+    )
+
+
+def build_secondary_validation_datasets(args) -> dict[str, object]:
+    """Build auto-discovered val splits without mutating training args."""
+    datasets = {}
+    for source in getattr(args, 'ensemble_validation_sources', []):
+        dataset_name = source['dataset_name']
+        if dataset_name in datasets:
+            raise ValueError(
+                f'duplicate secondary validation dataset name: {dataset_name!r}'
+            )
+        validation_values = (
+            args._cfg_dict.to_dict()
+            if hasattr(args, '_cfg_dict')
+            else vars(args)
+        )
+        validation_args = SimpleNamespace(**validation_values)
+        validation_args.coco_path = source['root']
+        validation_args.ensemble = False
+        dataset = build_dataset(image_set='val', args=validation_args)
+        if len(dataset) != int(source['samples']):
+            raise RuntimeError(
+                f'{dataset_name} validation sample count changed after preflight: '
+                f'{len(dataset)} != {source["samples"]}'
+            )
+        datasets[dataset_name] = dataset
+    return datasets
+
+
+def prefix_validation_stats(stats: Mapping, prefix: str) -> dict:
+    """Namespace secondary validation metrics without changing primary keys."""
+    if not prefix:
+        raise ValueError('validation metric prefix must not be empty')
+    return {f'{prefix}_{key}': value for key, value in stats.items()}
+
+
+def resolve_selection_metric(args) -> str:
+    """Resolve the configured metric to the selected validation namespace."""
+    selected = str(getattr(args, 'selection_best_dataset', 'wireframe')).strip()
+    secondary = [
+        source['dataset_name']
+        for source in getattr(args, 'ensemble_validation_sources', [])
+    ]
+    available = ['wireframe', *secondary]
+    if selected not in available:
+        raise ValueError(
+            f'--selection-best-dataset {selected!r} is unavailable; '
+            f'available datasets: {available}'
+        )
+    metric = str(getattr(args, 'selection_metric', 'sap10')).strip()
+    if not metric:
+        raise ValueError('selection_metric must not be empty')
+    resolved = metric if selected == 'wireframe' else f'{selected}_{metric}'
+    args.selection_best_dataset = selected
+    args.selection_available_datasets = available
+    args.selection_metric_resolved = resolved
+    return resolved
+
+
+def select_best_validation_dataset(
+    wireframe_dataset,
+    secondary_datasets: Mapping,
+    selected_name: str,
+):
+    """Return the dataset used for best-epoch validation rendering."""
+    if selected_name == 'wireframe':
+        return wireframe_dataset
+    try:
+        return secondary_datasets[selected_name]
+    except KeyError as error:
+        raise ValueError(
+            f'best validation dataset {selected_name!r} was not built; '
+            f'available datasets: {["wireframe", *secondary_datasets]}'
+        ) from error
 
 
 def configure_multiprocessing_sharing(args) -> str | None:
@@ -526,6 +629,10 @@ def main(args):
     validate_validation_render_options(args)
     validate_checkpoint_cli_args(args)
     resolve_ensemble_training_sources(args)
+    selection_metric = resolve_selection_metric(args)
+    selection_metric_configured = str(
+        getattr(args, 'selection_metric', 'sap10')
+    )
     sharing_strategy = configure_multiprocessing_sharing(args)
     if sharing_strategy is not None and utils.is_main_process():
         print(f'DataLoader multiprocessing sharing strategy: {sharing_strategy}')
@@ -546,7 +653,6 @@ def main(args):
     resume_global_step = 0
     best_metric = None
     best_epoch = None
-    selection_metric = getattr(args, 'selection_metric', 'sap10')
     selection_mode = getattr(args, 'selection_mode', 'max').lower()
     if selection_mode not in {'max', 'min'}:
         raise ValueError(f"selection_mode must be 'max' or 'min', got {selection_mode!r}")
@@ -769,30 +875,22 @@ def main(args):
         init_scale=getattr(args, 'amp_init_scale', 65536.0),
     )
 
+    secondary_validation_datasets = {}
+    secondary_validation_loaders = {}
     if args.eval:
         dataset_val = build_dataset(image_set='val', args=args)
-        if args.distributed:
-            sampler_val = DistributedSampler(dataset_val, shuffle=False)
-        else:
-            sampler_val = torch.utils.data.SequentialSampler(dataset_val)
-
-        data_loader_val = DataLoader(
+        data_loader_val = build_validation_data_loader(
             dataset_val,
-            args.batch_size_val,
-            sampler=sampler_val,
-            drop_last=False,
-            collate_fn=BatchImageCollateFunction(base_size=args.eval_spatial_size[0]),
-            **loader_options,
+            args,
+            loader_options,
         )
     else:
         dataset_train = build_dataset(image_set='train', args=args)
         dataset_val = None if args.skip_eval else build_dataset(image_set='val', args=args)
         if args.distributed:
             sampler_train = DistributedSampler(dataset_train, shuffle=True)
-            sampler_val = None if dataset_val is None else DistributedSampler(dataset_val, shuffle=False)
         else:
             sampler_train = torch.utils.data.RandomSampler(dataset_train)
-            sampler_val = None if dataset_val is None else torch.utils.data.SequentialSampler(dataset_val)
         
         data_loader_train = build_training_data_loader(
             dataset_train,
@@ -802,12 +900,22 @@ def main(args):
         )
         data_loader_val = None
         if dataset_val is not None:
-            data_loader_val = DataLoader(dataset_val,
-                                            args.batch_size_val,
-                                            sampler=sampler_val,
-                                            drop_last=False,
-                                            collate_fn=BatchImageCollateFunction(base_size=args.eval_spatial_size[0]),
-                                            **loader_options)
+            data_loader_val = build_validation_data_loader(
+                dataset_val,
+                args,
+                loader_options,
+            )
+            secondary_validation_datasets = build_secondary_validation_datasets(
+                args
+            )
+            secondary_validation_loaders = {
+                name: build_validation_data_loader(
+                    validation_dataset,
+                    args,
+                    loader_options,
+                )
+                for name, validation_dataset in secondary_validation_datasets.items()
+            }
 
     if not args.eval:
         args.train_multiscale_scales = list(
@@ -977,6 +1085,22 @@ def main(args):
                 evaluation_model, criterion, postprocessors, data_loader_val, device,
                 args.output_dir, args=args
             )
+            for dataset_name, validation_loader in (
+                secondary_validation_loaders.items()
+            ):
+                print(f'{dataset_name} validation:')
+                secondary_stats = evaluate(
+                    evaluation_model,
+                    criterion,
+                    postprocessors,
+                    validation_loader,
+                    device,
+                    args.output_dir,
+                    args=args,
+                )
+                test_stats.update(
+                    prefix_validation_stats(secondary_stats, dataset_name)
+                )
 
         is_best = False
         if selection_metric in test_stats:
@@ -1039,7 +1163,11 @@ def main(args):
                     rendered_path = save_best_validation_renders(
                         model=render_model,
                         postprocessor=postprocessors,
-                        dataset=dataset_val,
+                        dataset=select_best_validation_dataset(
+                            dataset_val,
+                            secondary_validation_datasets,
+                            args.selection_best_dataset,
+                        ),
                         device=device,
                         output_dir=output_dir,
                         epoch=epoch,
@@ -1077,7 +1205,9 @@ def main(args):
                 **{f'test_{k}': v for k, v in test_stats.items()},
                 'epoch': epoch,
                 'n_parameters': n_parameters,
-                'selection_metric': selection_metric,
+                'selection_best_dataset': args.selection_best_dataset,
+                'selection_metric': selection_metric_configured,
+                'selection_metric_resolved': selection_metric,
                 'best_metric': best_metric,
                 'best_epoch': best_epoch,
                 'sap_evaluation_protocol': args.sap_evaluation_protocol,

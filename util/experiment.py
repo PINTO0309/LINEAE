@@ -104,6 +104,24 @@ def write_experiment_records(
             ),
             "samples": int(source["samples"]),
         })
+    validation_source_records = []
+    for validation_source in getattr(args, "ensemble_validation_sources", []):
+        validation_source_records.append({
+            "name": validation_source["name"],
+            "dataset_name": validation_source["dataset_name"],
+            "split": validation_source["split"],
+            "root": str(Path(validation_source["root"]).resolve()),
+            "image_dir": str(
+                Path(validation_source["image_dir"]).resolve()
+            ),
+            "annotation": _file_record(
+                validation_source["annotation_file"],
+                known_sha256=validation_source.get(
+                    "annotation_sha256"
+                ),
+            ),
+            "samples": int(validation_source["samples"]),
+        })
 
     report = getattr(model.backbone, "checkpoint_report", None)
     if report is not None:
@@ -162,10 +180,16 @@ def write_experiment_records(
             "root": str(dataset_root.resolve()),
             "annotations": annotation_records,
             "ensemble": bool(getattr(args, "ensemble", False)),
+            "ensemble_schema": getattr(args, "ensemble_dataset_schema", None),
+            "discovery_root": getattr(args, "ensemble_discovery_root", None),
+            "discovered_datasets": _jsonable(
+                getattr(args, "ensemble_discovered_datasets", [])
+            ),
             "training_sources": training_source_records,
             "training_samples": getattr(
                 args, "training_dataset_sample_count", None
             ),
+            "validation_sources": validation_source_records,
             "image_preprocess_schema": getattr(
                 args, "image_preprocess_schema", IMAGE_PREPROCESS_SCHEMA
             ),
@@ -185,6 +209,13 @@ def write_experiment_records(
         },
         "training": {
             "seed": args.seed,
+            "selection_best_dataset": getattr(
+                args, "selection_best_dataset", "wireframe"
+            ),
+            "selection_metric": getattr(args, "selection_metric", "sap10"),
+            "selection_metric_resolved": getattr(
+                args, "selection_metric_resolved", "sap10"
+            ),
             "world_size": getattr(args, "world_size", 1),
             "batch_size_per_rank": getattr(args, "batch_size_train", None),
             "gradient_accumulation_steps": accumulation,

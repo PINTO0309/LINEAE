@@ -12,11 +12,14 @@ from datasets.collate import BatchImageCollateFunction, encoder_token_count
 from datasets.coco import make_coco_transforms
 from datasets.transforms import ColorJitter, Normalize, crop, hflip, resize, rotation
 from main import (
+    build_secondary_validation_datasets,
     build_training_data_loader,
     configure_multiprocessing_sharing,
     create,
     data_loader_options,
+    resolve_selection_metric,
     resolve_training_horizon,
+    select_best_validation_dataset,
 )
 from util.slconfig import SLConfig
 
@@ -42,7 +45,15 @@ def _args(**overrides):
     return SimpleNamespace(**values)
 
 
-def _write_coco_split(root, split, image_count, *, write_images=True):
+def _write_coco_split(
+    root,
+    split,
+    image_count,
+    *,
+    write_images=True,
+    annotation_filename=None,
+    line_format=None,
+):
     image_dir = root / f"{split}2017"
     annotation_dir = root / "annotations"
     image_dir.mkdir(parents=True, exist_ok=True)
@@ -74,10 +85,16 @@ def _write_coco_split(root, split, image_count, *, write_images=True):
         "annotations": annotations,
         "categories": [{"id": 0, "name": "line"}],
     }
-    (annotation_dir / f"lines_{split}2017.json").write_text(
+    if line_format is not None:
+        annotation["line_format"] = line_format
+    annotation_path = annotation_dir / (
+        annotation_filename or f"lines_{split}2017.json"
+    )
+    annotation_path.write_text(
         json.dumps(annotation),
         encoding="utf-8",
     )
+    return annotation_path
 
 
 def test_dino_normalization_profile_is_applied_once():
@@ -220,7 +237,7 @@ def test_copied_wireframe_dataset_is_readable():
     assert len(loader) == 625
 
 
-def test_real_ensemble_dataset_includes_all_york_splits_and_keeps_wireframe_val():
+def test_real_ensemble_dataset_includes_york_and_screws_train_only():
     args = _args(
         ensemble=True,
         ensemble_york_path="data/york_processed",
@@ -232,17 +249,32 @@ def test_real_ensemble_dataset_includes_all_york_splits_and_keeps_wireframe_val(
     sources = resolve_ensemble_training_sources(args)
     train_dataset = build_dataset("train", args)
     val_dataset = build_dataset("val", args)
+    secondary_val = build_secondary_validation_datasets(args)
 
     assert [(source["name"], source["samples"]) for source in sources] == [
         ("york_train", 0),
         ("york_val", 102),
+        ("screws_train", 345),
     ]
-    assert len(train_dataset) == 5102
-    assert [len(dataset) for dataset in train_dataset.datasets] == [5000, 102]
+    assert len(train_dataset) == 5447
+    assert [len(dataset) for dataset in train_dataset.datasets] == [5000, 102, 345]
     assert len(val_dataset) == 462
+    assert {name: len(dataset) for name, dataset in secondary_val.items()} == {
+        "screws": 55,
+    }
     assert args.ensemble_split_samples == {"train": 0, "val": 102}
-    assert args.ensemble_training_sample_count == 102
-    assert args.training_dataset_sample_count == 5102
+    assert args.ensemble_dataset_schema == "wireframe_york_auto_discovery_v3"
+    assert [dataset["name"] for dataset in args.ensemble_discovered_datasets] == [
+        "screws"
+    ]
+    screws = args.ensemble_discovered_datasets[0]
+    assert screws["train"]["samples"] == 345
+    assert screws["val"]["samples"] == 55
+    assert len(screws["train"]["annotation_sha256"]) == 64
+    assert len(screws["val"]["annotation_sha256"]) == 64
+    assert args.ensemble_training_sample_count == 447
+    assert args.training_dataset_sample_count == 5447
+    assert all(source["name"] != "screws_val" for source in sources)
 
     sampler = torch.utils.data.RandomSampler(
         train_dataset,
@@ -255,7 +287,23 @@ def test_real_ensemble_dataset_includes_all_york_splits_and_keeps_wireframe_val(
         {"num_workers": 0, "pin_memory": False},
     )
     assert loader.drop_last is False
-    assert len(loader) == 638
+    assert len(loader) == 681
+
+
+def test_finetune_config_builds_auto_discovered_validation_without_model():
+    config = SLConfig.fromfile(
+        "configs/lineae/finetune/lineae_2xl_finetune.py"
+    )
+    config.coco_path = "data/wireframe_processed"
+    config.ensemble = True
+    config.ensemble_york_path = "data/york_processed"
+
+    resolve_ensemble_training_sources(config)
+    validation_datasets = build_secondary_validation_datasets(config)
+
+    assert {name: len(dataset) for name, dataset in validation_datasets.items()} == {
+        "screws": 55,
+    }
 
 
 def test_real_york_ensemble_sample_runs_finite_forward_and_backward():
@@ -293,6 +341,192 @@ def test_real_york_ensemble_sample_runs_finite_forward_and_backward():
     assert target["lines"].shape[0] > 0
     assert torch.isfinite(target["lines"]).all()
     assert torch.isfinite(loss)
+
+
+def test_ensemble_auto_ignores_unrelated_directories(tmp_path):
+    york_root = tmp_path / "york_processed"
+    _write_coco_split(york_root, "train", 0)
+    _write_coco_split(york_root, "val", 1)
+    (tmp_path / "__pycache__").mkdir()
+    (tmp_path / "test_render").mkdir()
+    args = _args(
+        ensemble=True,
+        coco_path=str(tmp_path / "wireframe_processed"),
+        ensemble_york_path=str(york_root),
+    )
+
+    sources = resolve_ensemble_training_sources(args)
+
+    assert [source["name"] for source in sources] == ["york_train", "york_val"]
+    assert args.ensemble_discovered_datasets == []
+    assert args.ensemble_validation_sources == []
+    assert args.ensemble_training_sample_count == 1
+
+
+def test_ensemble_discovers_multiple_datasets_in_normalized_name_order(tmp_path):
+    york_root = tmp_path / "york_processed"
+    _write_coco_split(york_root, "train", 0)
+    _write_coco_split(york_root, "val", 1)
+    zeta_root = tmp_path / "Zeta_processed"
+    alpha_root = tmp_path / "Alpha-Data_processed"
+    _write_coco_split(zeta_root, "train", 2)
+    _write_coco_split(zeta_root, "val", 1)
+    _write_coco_split(alpha_root, "train", 1, line_format="xy_dxdy_v1")
+    _write_coco_split(alpha_root, "val", 3)
+    args = _args(
+        ensemble=True,
+        coco_path=str(tmp_path / "wireframe_processed"),
+        ensemble_york_path=str(york_root),
+    )
+
+    sources = resolve_ensemble_training_sources(args)
+    assert [(source["name"], source["samples"]) for source in sources] == [
+        ("york_train", 0),
+        ("york_val", 1),
+        ("alpha_data_train", 1),
+        ("zeta_train", 2),
+    ]
+    assert [dataset["name"] for dataset in args.ensemble_discovered_datasets] == [
+        "alpha_data",
+        "zeta",
+    ]
+    assert [source["name"] for source in args.ensemble_validation_sources] == [
+        "alpha_data_val",
+        "zeta_val",
+    ]
+    assert args.ensemble_training_sample_count == 4
+
+
+def test_auto_discovery_rejects_partial_splits_and_duplicate_names(tmp_path):
+    york_root = tmp_path / "york_processed"
+    _write_coco_split(york_root, "train", 0)
+    _write_coco_split(york_root, "val", 1)
+    partial_root = tmp_path / "partial_processed"
+    (partial_root / "train2017").mkdir(parents=True)
+    args = _args(
+        ensemble=True,
+        coco_path=str(tmp_path / "wireframe_processed"),
+        ensemble_york_path=str(york_root),
+    )
+
+    with pytest.raises(FileNotFoundError, match="incomplete auto-discovered"):
+        resolve_ensemble_training_sources(args)
+
+    (partial_root / "train2017").rmdir()
+    partial_root.rmdir()
+    _write_coco_split(tmp_path / "duplicate", "train", 1)
+    _write_coco_split(tmp_path / "duplicate_processed", "train", 1)
+    with pytest.raises(ValueError, match="duplicate.*'duplicate'"):
+        resolve_ensemble_training_sources(args)
+
+
+def test_auto_discovery_rejects_partial_val_bad_format_and_missing_image(tmp_path):
+    york_root = tmp_path / "york_processed"
+    _write_coco_split(york_root, "train", 0)
+    _write_coco_split(york_root, "val", 1)
+    extra_root = tmp_path / "extra_processed"
+    _write_coco_split(extra_root, "train", 1)
+    args = _args(
+        ensemble=True,
+        coco_path=str(tmp_path / "wireframe_processed"),
+        ensemble_york_path=str(york_root),
+    )
+
+    (extra_root / "val2017").mkdir()
+    with pytest.raises(FileNotFoundError, match="incomplete validation split"):
+        resolve_ensemble_training_sources(args)
+
+    _write_coco_split(extra_root, "val", 1, line_format="xyxy")
+    with pytest.raises(ValueError, match="unsupported line_format"):
+        resolve_ensemble_training_sources(args)
+
+    _write_coco_split(extra_root, "val", 1, write_images=False)
+    for image_path in (extra_root / "val2017").iterdir():
+        image_path.unlink()
+    with pytest.raises(FileNotFoundError, match="references missing images"):
+        resolve_ensemble_training_sources(args)
+
+
+def test_auto_discovery_rejects_invalid_dxdy_endpoint(tmp_path):
+    york_root = tmp_path / "york_processed"
+    _write_coco_split(york_root, "train", 0)
+    _write_coco_split(york_root, "val", 1)
+    extra_root = tmp_path / "extra_processed"
+    annotation_path = _write_coco_split(extra_root, "train", 1)
+    annotation = json.loads(annotation_path.read_text(encoding="utf-8"))
+    annotation["annotations"][0]["line"] = [15.0, 1.0, 2.0, 0.0]
+    annotation_path.write_text(json.dumps(annotation), encoding="utf-8")
+    args = _args(
+        ensemble=True,
+        coco_path=str(tmp_path / "wireframe_processed"),
+        ensemble_york_path=str(york_root),
+    )
+
+    with pytest.raises(ValueError, match="endpoint outside"):
+        resolve_ensemble_training_sources(args)
+
+
+def test_auto_discovery_rejects_invalid_json_and_nonfinite_lines(tmp_path):
+    york_root = tmp_path / "york_processed"
+    _write_coco_split(york_root, "train", 0)
+    _write_coco_split(york_root, "val", 1)
+    extra_root = tmp_path / "extra_processed"
+    annotation_path = _write_coco_split(extra_root, "train", 1)
+    args = _args(
+        ensemble=True,
+        coco_path=str(tmp_path / "wireframe_processed"),
+        ensemble_york_path=str(york_root),
+    )
+
+    annotation_path.write_text("{", encoding="utf-8")
+    with pytest.raises(ValueError, match="could not read ensemble extra"):
+        resolve_ensemble_training_sources(args)
+
+    annotation_path = _write_coco_split(extra_root, "train", 1)
+    annotation = json.loads(annotation_path.read_text(encoding="utf-8"))
+    annotation["annotations"][0]["line"][2] = float("nan")
+    annotation_path.write_text(json.dumps(annotation), encoding="utf-8")
+    with pytest.raises(ValueError, match="four finite line values"):
+        resolve_ensemble_training_sources(args)
+
+
+def test_selection_best_dataset_resolves_wireframe_and_secondary_metric(tmp_path):
+    york_root = tmp_path / "york_processed"
+    _write_coco_split(york_root, "train", 0)
+    _write_coco_split(york_root, "val", 1)
+    _write_coco_split(tmp_path / "screws_processed", "train", 1)
+    _write_coco_split(tmp_path / "screws_processed", "val", 2)
+    _write_coco_split(tmp_path / "train_only_processed", "train", 1)
+    args = _args(
+        ensemble=True,
+        coco_path=str(tmp_path / "wireframe_processed"),
+        ensemble_york_path=str(york_root),
+        selection_metric="sap10",
+        selection_best_dataset="wireframe",
+    )
+    resolve_ensemble_training_sources(args)
+
+    assert resolve_selection_metric(args) == "sap10"
+    args.selection_best_dataset = "screws"
+    assert resolve_selection_metric(args) == "screws_sap10"
+    assert args.selection_metric_resolved == "screws_sap10"
+    for unavailable in ("missing", "train_only", "york"):
+        args.selection_best_dataset = unavailable
+        with pytest.raises(ValueError, match="available datasets.*wireframe.*screws"):
+            resolve_selection_metric(args)
+
+
+def test_best_validation_render_dataset_follows_selection():
+    wireframe = object()
+    screws = object()
+    secondary = {"screws": screws}
+
+    assert select_best_validation_dataset(
+        wireframe, secondary, "wireframe"
+    ) is wireframe
+    assert select_best_validation_dataset(wireframe, secondary, "screws") is screws
+    with pytest.raises(ValueError, match="was not built"):
+        select_best_validation_dataset(wireframe, secondary, "missing")
 
 
 def test_ensemble_source_preflight_rejects_invalid_inputs(tmp_path):
