@@ -66,6 +66,7 @@ python demo_lineae.py \
 --tensorrt-precision bf16 \
 --score-threshold 0.3
 ```
+With the `3XL` model, no issues arise even with FP16 inference.
 ```bash
 python demo_lineae.py \
 --input 0 \
