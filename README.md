@@ -57,6 +57,22 @@ python demo_lineae.py \
 --execution-provider cpu \
 --score-threshold 0.2
 ```
+For the `2XL` model specifically, BF16 must be specified during TensorRT FP16 inference because the final layer of the DINOv3 backbone diverges to NaN.
+```bash
+python demo_lineae.py \
+--input 0 \
+--model lineae_2xl_1x3x640x640_1100.onnx \
+--execution-provider tensorrt \
+--tensorrt-precision bf16 \
+--score-threshold 0.3
+```
+```bash
+python demo_lineae.py \
+--input 0 \
+--model lineae_3xl_1x3x640x640_1100.onnx \
+--execution-provider tensorrt \
+--score-threshold 0.3
+```
 
 ## Datasets
 
