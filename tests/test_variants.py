@@ -502,7 +502,7 @@ def test_2xl_finetune_config_preserves_model_and_sets_schedule():
     )
     assert finetune.training_profile == "single_gpu_96gb_ensemble_finetune"
     assert finetune.epochs == 12
-    assert 681 * finetune.epochs == 8172
+    assert 688 * finetune.epochs == 8256
     assert finetune.lr == 2e-5
     assert finetune.model_parameters[0]["lr"] == 1e-6
     assert finetune.model_parameters[1]["lr"] == 1e-6
@@ -510,7 +510,7 @@ def test_2xl_finetune_config_preserves_model_and_sets_schedule():
     assert finetune.lr_scheduler == "cosine"
     assert finetune.scheduler_step_unit == "optimizer"
     assert finetune.use_warmup is True
-    assert finetune.warmup_iters == 681
+    assert finetune.warmup_iters == 688
     assert finetune.min_lr == 1e-7
     assert finetune.batch_size_train == 4
     assert finetune.gradient_accumulation_steps == 2

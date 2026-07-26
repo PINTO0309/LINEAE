@@ -34,8 +34,8 @@ epochs = 12
 lr_scheduler = 'cosine'
 scheduler_step_unit = 'optimizer'
 use_warmup = True
-# 5,447 samples / physical batch 4 / accumulation 2 = 681 optimizer steps.
-warmup_iters = 681
+# 5,497 samples / physical batch 4 / accumulation 2 = 688 optimizer steps.
+warmup_iters = 688
 min_lr = 0.0000001
 
 batch_size_train = 4

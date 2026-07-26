@@ -82,12 +82,12 @@ def test_2xl_finetune_optimizer_groups_use_tiny_model_only():
         0.0,
         1e-4,
     ]
-    config.optimizer_steps_per_epoch = 681
+    config.optimizer_steps_per_epoch = 688
     scheduler = build_lr_scheduler(config, optimizer)
-    assert config.lr_scheduler_total_units_resolved == 8172
-    assert config.lr_scheduler_warmup_units_resolved == 681
-    assert config.lr_scheduler_post_warmup_units_resolved == 7492
-    assert scheduler.T_max == 7492
+    assert config.lr_scheduler_total_units_resolved == 8256
+    assert config.lr_scheduler_warmup_units_resolved == 688
+    assert config.lr_scheduler_post_warmup_units_resolved == 7569
+    assert scheduler.T_max == 7569
 
 
 @pytest.mark.parametrize(
@@ -361,7 +361,7 @@ def test_ensemble_dataset_provenance_is_written_to_records_and_checkpoint(
             "image_dir": str(tmp_path),
             "annotation_file": str(screws_train_annotation),
             "annotation_sha256": screws_hash,
-            "samples": 345,
+            "samples": 395,
         },
     ]
     args = SimpleNamespace(
@@ -413,8 +413,8 @@ def test_ensemble_dataset_provenance_is_written_to_records_and_checkpoint(
                 "samples": 55,
             },
         }],
-        ensemble_training_sample_count=447,
-        training_dataset_sample_count=5447,
+        ensemble_training_sample_count=497,
+        training_dataset_sample_count=5497,
         training_dataset_sources=sources,
         selection_metric="sap10",
         selection_best_dataset="screws",
@@ -439,12 +439,12 @@ def test_ensemble_dataset_provenance_is_written_to_records_and_checkpoint(
     )
     assert manifest["dataset"]["discovery_root"] == str(tmp_path)
     assert manifest["dataset"]["discovered_datasets"][0]["name"] == "screws"
-    assert manifest["dataset"]["training_samples"] == 5447
+    assert manifest["dataset"]["training_samples"] == 5497
     assert [source["samples"] for source in manifest["dataset"]["training_sources"]] == [
         5000,
         0,
         102,
-        345,
+        395,
     ]
     assert manifest["dataset"]["training_sources"][2]["annotation"]["sha256"] == (
         york_hashes["val"]
@@ -499,8 +499,8 @@ def test_ensemble_dataset_provenance_is_written_to_records_and_checkpoint(
     ] == screws_val_hash
     assert checkpoint["config"]["selection_best_dataset"] == "screws"
     assert checkpoint["config"]["selection_metric_resolved"] == "screws_sap10"
-    assert checkpoint["config"]["ensemble_training_sample_count"] == 447
-    assert checkpoint["config"]["training_dataset_sample_count"] == 5447
+    assert checkpoint["config"]["ensemble_training_sample_count"] == 497
+    assert checkpoint["config"]["training_dataset_sample_count"] == 5497
 
 
 def test_backbone_checkpoint_initialization_strictly_loads_only_dino_core():
@@ -1568,11 +1568,11 @@ def test_native_p5_variant_does_not_require_synthetic_p5_schema():
             "ensemble_discovered_datasets",
             [{
                 "name": "screws",
-                "train": {"samples": 345, "annotation_sha256": "d" * 64},
+                "train": {"samples": 395, "annotation_sha256": "d" * 64},
             }],
             [{
                 "name": "screws",
-                "train": {"samples": 345, "annotation_sha256": "e" * 64},
+                "train": {"samples": 395, "annotation_sha256": "e" * 64},
             }],
         ),
         (
@@ -1580,8 +1580,8 @@ def test_native_p5_variant_does_not_require_synthetic_p5_schema():
             [{"dataset_name": "screws", "annotation_sha256": "f" * 64}],
             [{"dataset_name": "screws", "annotation_sha256": "0" * 64}],
         ),
-        ("ensemble_training_sample_count", 447, 446),
-        ("training_dataset_sample_count", 5447, 5446),
+        ("ensemble_training_sample_count", 497, 496),
+        ("training_dataset_sample_count", 5497, 5496),
         ("selection_best_dataset", "screws", "wireframe"),
         ("selection_metric_resolved", "screws_sap10", "sap10"),
         ("eval_idx", 5, 2),

@@ -254,10 +254,10 @@ def test_real_ensemble_dataset_includes_york_and_screws_train_only():
     assert [(source["name"], source["samples"]) for source in sources] == [
         ("york_train", 0),
         ("york_val", 102),
-        ("screws_train", 345),
+        ("screws_train", 395),
     ]
-    assert len(train_dataset) == 5447
-    assert [len(dataset) for dataset in train_dataset.datasets] == [5000, 102, 345]
+    assert len(train_dataset) == 5497
+    assert [len(dataset) for dataset in train_dataset.datasets] == [5000, 102, 395]
     assert len(val_dataset) == 462
     assert {name: len(dataset) for name, dataset in secondary_val.items()} == {
         "screws": 55,
@@ -268,12 +268,12 @@ def test_real_ensemble_dataset_includes_york_and_screws_train_only():
         "screws"
     ]
     screws = args.ensemble_discovered_datasets[0]
-    assert screws["train"]["samples"] == 345
+    assert screws["train"]["samples"] == 395
     assert screws["val"]["samples"] == 55
     assert len(screws["train"]["annotation_sha256"]) == 64
     assert len(screws["val"]["annotation_sha256"]) == 64
-    assert args.ensemble_training_sample_count == 447
-    assert args.training_dataset_sample_count == 5447
+    assert args.ensemble_training_sample_count == 497
+    assert args.training_dataset_sample_count == 5497
     assert all(source["name"] != "screws_val" for source in sources)
 
     sampler = torch.utils.data.RandomSampler(
@@ -287,7 +287,7 @@ def test_real_ensemble_dataset_includes_york_and_screws_train_only():
         {"num_workers": 0, "pin_memory": False},
     )
     assert loader.drop_last is False
-    assert len(loader) == 681
+    assert len(loader) == 688
 
 
 def test_finetune_config_builds_auto_discovered_validation_without_model():

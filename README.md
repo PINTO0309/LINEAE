@@ -147,14 +147,14 @@ Screws-specific training CLI option is required.
 `configs/lineae/finetune/lineae_2xl_finetune.py` starts a fresh 12-epoch run from
 completed 2XL inference weights. It trains on Wireframe train, YorkUrban train/val,
 and every auto-discovered train split in their natural proportions. With the
-current Screws dataset this is 5,447 images, and Wireframe val and Screws val are
+current Screws dataset this is 5,497 images, and Wireframe val and Screws val are
 evaluated separately every epoch. Pass
 `--selection-best-dataset screws` to select `checkpoint_best.pth` by
 `screws_sap10`; Screws metrics are logged with a `screws_` prefix. Omitting the
 option retains the global `wireframe` default and selects by `sap10`. The effective
 batch remains eight (physical batch four, accumulation two),
-with a one-epoch/681-step warm-up, a `2e-5` detector LR, a `1e-6` DINO-core LR,
-and an 8,172-step cosine horizon ending at `1e-7`. Distillation and EMA are disabled.
+with a one-epoch/688-step warm-up, a `2e-5` detector LR, a `1e-6` DINO-core LR,
+and an 8,256-step cosine horizon ending at `1e-7`. Distillation and EMA are disabled.
 
 The full 2XL model, optimizer, and backward pass are not suitable for an 8 GB GPU.
 On such a development host, run only the lightweight config, annotation, provenance,
