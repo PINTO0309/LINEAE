@@ -26,6 +26,8 @@ DEFAULT_OUTPUT_DIRECTORY = PROJECT_ROOT / "output" / "demo_lineae"
 DEFAULT_SCORE_THRESHOLD = 0.3
 DEFAULT_MAX_LINES = 100
 DEFAULT_VIDEO_FPS = 30.0
+DEFAULT_TENSORRT_PRECISION = "fp16"
+TENSORRT_PRECISIONS = ("fp16", "bf16", "fp32")
 CAMERA_FPS_CALIBRATION_FRAMES = 10
 IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".webp"}
 VARIANTS = ("A", "F", "P", "N", "T", "S", "M", "L", "X", "XL", "2XL", "3XL")
@@ -92,6 +94,7 @@ class LineaeOnnxModel:
         model_path: Path,
         variant: str | None,
         execution_provider: str,
+        tensorrt_precision: str = DEFAULT_TENSORRT_PRECISION,
     ) -> None:
         self.model_path = resolve_existing_file(model_path, "ONNX model")
         if self.model_path.suffix.lower() != ".onnx":
@@ -104,6 +107,7 @@ class LineaeOnnxModel:
         session_options, providers = build_providers(
             execution_provider,
             self.model_path,
+            tensorrt_precision,
         )
         print("Requested ONNX Runtime providers:")
         pprint(providers)
@@ -323,6 +327,15 @@ def parse_args() -> argparse.Namespace:
         help="ONNX Runtime execution provider (default: cuda).",
     )
     parser.add_argument(
+        "--tensorrt-precision",
+        choices=TENSORRT_PRECISIONS,
+        default=DEFAULT_TENSORRT_PRECISION,
+        help=(
+            "TensorRT inference precision; used only with "
+            f"--execution-provider tensorrt (default: {DEFAULT_TENSORRT_PRECISION})."
+        ),
+    )
+    parser.add_argument(
         "--score-threshold",
         "-t",
         type=score_threshold,
@@ -400,7 +413,14 @@ def resolve_input_source(value: str) -> InputSource:
 def build_providers(
     execution_provider: str,
     model_path: Path,
+    tensorrt_precision: str = DEFAULT_TENSORRT_PRECISION,
 ) -> tuple[ort.SessionOptions, list[Any]]:
+    if tensorrt_precision not in TENSORRT_PRECISIONS:
+        raise ValueError(
+            f"unsupported TensorRT precision: {tensorrt_precision}; "
+            f"expected one of: {', '.join(TENSORRT_PRECISIONS)}"
+        )
+
     available = ort.get_available_providers()
     required = {
         "cpu": "CPUExecutionProvider",
@@ -423,15 +443,17 @@ def build_providers(
 
     if "CUDAExecutionProvider" not in available:
         raise RuntimeError("TensorRT execution requires CUDAExecutionProvider fallback")
-    tensorrt = (
-        "TensorrtExecutionProvider",
-        {
-            "trt_engine_cache_enable": True,
-            "trt_engine_cache_path": str(model_path.parent),
-            "trt_fp16_enable": True,
-            "trt_op_types_to_exclude": "NonMaxSuppression,NonZero,RoiAlign",
-        },
-    )
+    tensorrt_options: dict[str, Any] = {
+        "trt_engine_cache_enable": True,
+        "trt_engine_cache_path": str(model_path.parent),
+        "trt_op_types_to_exclude": "NonMaxSuppression,NonZero,RoiAlign",
+    }
+    if tensorrt_precision == "fp16":
+        tensorrt_options["trt_fp16_enable"] = True
+    elif tensorrt_precision == "bf16":
+        tensorrt_options["trt_bf16_enable"] = True
+
+    tensorrt = ("TensorrtExecutionProvider", tensorrt_options)
     return options, [tensorrt, cuda]
 
 
@@ -768,6 +790,7 @@ def main() -> None:
         args.model,
         args.variant,
         args.execution_provider,
+        args.tensorrt_precision,
     )
     display = DisplayWindow(enabled=not args.disable_display)
     save_result = not args.disable_save

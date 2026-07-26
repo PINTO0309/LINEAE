@@ -57,6 +57,51 @@ def test_tensorrt_cache_is_written_beside_the_onnx(monkeypatch, tmp_path):
     assert provider_options["trt_engine_cache_path"] == str(model_path.parent)
 
 
+@pytest.mark.parametrize(
+    ("precision", "enabled_option"),
+    [
+        ("fp16", "trt_fp16_enable"),
+        ("bf16", "trt_bf16_enable"),
+        ("fp32", None),
+    ],
+)
+def test_tensorrt_precision_selects_only_the_requested_mode(
+    monkeypatch,
+    tmp_path,
+    precision,
+    enabled_option,
+):
+    monkeypatch.setattr(
+        "demo_lineae.ort.get_available_providers",
+        lambda: ["TensorrtExecutionProvider", "CUDAExecutionProvider"],
+    )
+
+    _, providers = build_providers(
+        "tensorrt",
+        tmp_path / "lineae.onnx",
+        precision,
+    )
+
+    _, provider_options = providers[0]
+    precision_options = {
+        key: value
+        for key, value in provider_options.items()
+        if key in {"trt_fp16_enable", "trt_bf16_enable"}
+    }
+    expected = {} if enabled_option is None else {enabled_option: True}
+    assert precision_options == expected
+
+
+def test_tensorrt_precision_rejects_an_unknown_mode(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "demo_lineae.ort.get_available_providers",
+        lambda: ["TensorrtExecutionProvider", "CUDAExecutionProvider"],
+    )
+
+    with pytest.raises(ValueError, match="unsupported TensorRT precision"):
+        build_providers("tensorrt", tmp_path / "lineae.onnx", "tf32")
+
+
 def test_demo_preprocessing_matches_opencv_linear_rgb_normalization():
     bgr = np.array(
         [
