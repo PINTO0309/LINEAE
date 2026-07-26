@@ -1080,3 +1080,18 @@ LINEAE is distributed under the root [Apache License 2.0](LICENSE).
     abstract  = {A model for activating human gaze regions using heat maps, built with DINOv3.},
   }
   ```
+- screws Computer Vision Model - CC BY 4.0
+  ```
+  @misc{ screws-ybbio_dataset,
+    title = { screws Dataset },
+    type = { Open Source Dataset },
+    author = { Alexander Jaworowski },
+    howpublished = { \url{ https://universe.roboflow.com/alexander-jaworowski-rshsa/screws-ybbio } },
+    url = { https://universe.roboflow.com/alexander-jaworowski-rshsa/screws-ybbio },
+    journal = { Roboflow Universe },
+    publisher = { Roboflow },
+    year = { 2025 },
+    month = { mar },
+    note = { visited on 2026-07-26 },
+  }
+  ```
