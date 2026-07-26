@@ -1092,6 +1092,19 @@ LINEAE is distributed under the root [Apache License 2.0](LICENSE).
     publisher = { Roboflow },
     year = { 2025 },
     month = { mar },
-    note = { visited on 2026-07-26 },
+  }
+  ```
+- bolt Computer Vision Dataset - CC BY 4.0
+  ```
+  @misc{ bolt-wheeq_dataset,
+    title = { bolt Dataset },
+    type = { Open Source Dataset },
+    author = { None },
+    howpublished = { \url{ https://universe.roboflow.com/none-zwg10/bolt-wheeq } },
+    url = { https://universe.roboflow.com/none-zwg10/bolt-wheeq },
+    journal = { Roboflow Universe },
+    publisher = { Roboflow },
+    year = { 2025 },
+    month = { sep },
   }
   ```
