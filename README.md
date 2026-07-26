@@ -21,6 +21,14 @@ LINEAE (**LINEA E**nhanced) is an experimental successor to [LINEA](https://gith
 
   https://github.com/user-attachments/assets/60cd5dcf-3319-4267-abb7-21fdaabd68f6
 
+- LINEAE-2XL ONNX (1.5 GB) + TensorRT BF16 + RTX3070
+  - Results of fine-tuning using only 300 images of screws of a fixed length.
+  - Although fine-tuning was performed with virtually no diversity in the training data for the screws, the model improved to the point where the screws could be clearly detected.
+  - By training a model on a large number of screws varying in length, thickness, and degree of crowding, it should be possible to detect the number, orientation, and length of the screws using LSD.
+  - This was a rough experiment conducted to assess the model's detection potential when fine-tuned using a mix of data that included sources other than the furniture dataset.
+
+  https://github.com/user-attachments/assets/ee20aa0b-e8c8-4bee-a86c-ed10f2bad371
+
 ## Setup
 
 The Python version and dependencies are pinned in `pyproject.toml`.
