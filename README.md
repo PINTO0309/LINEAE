@@ -110,6 +110,49 @@ The authoritative mapping, including exact bootstrap filenames, is in `models/li
 
 ## Training
 
+<details><summary>scripts</summary>
+
+```bash
+##### No distillation
+VARIANT=s
+ python main.py \
+-c "configs/lineae/lineae_${VARIANT}.py" \
+--coco_path data/wireframe_processed \
+--device cuda \
+--amp \
+--num_workers 8 \
+--seed 42 \
+--options \
+output_dir="outputs/lineae_${VARIANT}-nokd-full-unfreeze-seed42" \
+progressive_unfreeze=False \
+backbone_trainable_layers=0 \
+initial_freeze_epochs=0 \
+unfreeze_interval=0 \
+use_checkpoint=False
+
+##### distillation
+VARIANT=s
+python main.py \
+-c "configs/lineae/distill/lineae_${VARIANT}.py" \
+--init-checkpoint outputs/lineae_${VARIANT}-nokd-full-unfreeze-seed42/checkpoint_best.pth \
+--coco_path data/wireframe_processed \
+--device cuda \
+--amp \
+--num_workers 8 \
+--seed 42 \
+--ensemble \
+--options \
+output_dir="outputs/lineae_${VARIANT}-distill-full-unfreeze-seed42" \
+progressive_unfreeze=False \
+backbone_trainable_layers=0 \
+initial_freeze_epochs=0 \
+unfreeze_interval=0 \
+use_checkpoint=False \
+distill_teacher_config=configs/lineae/lineae_3xl.py \
+distill_teacher_checkpoint=outputs/lineae_3xl-nokd-full-unfreeze-seed42-wide/checkpoint_best.pth \
+distill_allow_unqualified_teacher=True
+```
+
 `--ensemble` always adds the YorkUrban train and validation splits to Wireframe
 training. It also scans the directory containing `--coco_path` and automatically
 adds every compatible sibling dataset in normalized dataset-name order. A sibling
@@ -127,15 +170,15 @@ training:
 
 ```bash
 python data/convert_screws_annotations.py \
-  --input data/screws_processed/annotations/lines_train2017.json \
-  --output data/screws_processed/annotations/lines_train2017.json \
-  --overwrite
+--input data/screws_processed/annotations/lines_train2017.json \
+--output data/screws_processed/annotations/lines_train2017.json \
+--overwrite
 
 python data/convert_screws_annotations.py \
-  --input data/screws_processed/annotations/lines_val2017.json \
-  --output data/screws_processed/annotations/lines_val2017.json \
-  --image-dir data/screws_processed/val2017 \
-  --overwrite
+--input data/screws_processed/annotations/lines_val2017.json \
+--output data/screws_processed/annotations/lines_val2017.json \
+--image-dir data/screws_processed/val2017 \
+--overwrite
 ```
 
 Conversion atomically replaces each source annotation after full validation.
@@ -222,49 +265,6 @@ uv run --locked python tools/evaluate_checkpoint.py \
 --dataset screws=data/screws_processed \
 --device cuda --amp --batch-size 4 --num-workers 8 \
 --output outputs/evaluations/lineae_2xl-finetune-latest.json
-```
-
-<details><summary>scripts</summary>
-
-```bash
-##### No distillation
-VARIANT=s
- python main.py \
--c "configs/lineae/lineae_${VARIANT}.py" \
---coco_path data/wireframe_processed \
---device cuda \
---amp \
---num_workers 8 \
---seed 42 \
---options \
-output_dir="outputs/lineae_${VARIANT}-nokd-full-unfreeze-seed42" \
-progressive_unfreeze=False \
-backbone_trainable_layers=0 \
-initial_freeze_epochs=0 \
-unfreeze_interval=0 \
-use_checkpoint=False
-
-##### distillation
-VARIANT=s
-python main.py \
--c "configs/lineae/distill/lineae_${VARIANT}.py" \
---init-checkpoint outputs/lineae_${VARIANT}-nokd-full-unfreeze-seed42/checkpoint_best.pth \
---coco_path data/wireframe_processed \
---device cuda \
---amp \
---num_workers 8 \
---seed 42 \
---ensemble \
---options \
-output_dir="outputs/lineae_${VARIANT}-distill-full-unfreeze-seed42" \
-progressive_unfreeze=False \
-backbone_trainable_layers=0 \
-initial_freeze_epochs=0 \
-unfreeze_interval=0 \
-use_checkpoint=False \
-distill_teacher_config=configs/lineae/lineae_3xl.py \
-distill_teacher_checkpoint=outputs/lineae_3xl-nokd-full-unfreeze-seed42-wide/checkpoint_best.pth \
-distill_allow_unqualified_teacher=True
 ```
 
 </details>
