@@ -26,7 +26,7 @@ LINEAE (**LINEA E**nhanced) is an experimental successor to [LINEA](https://gith
   - Although fine-tuning was performed with virtually no diversity in the training data for the screws, the model improved to the point where the screws could be clearly detected.
   - By training a model on a large number of screws varying in length, thickness, and degree of crowding, it should be possible to detect the number, orientation, and length of the screws using LSD.
   - This was a rough experiment conducted to assess the model's detection potential when fine-tuned using a mix of data that included sources other than the furniture dataset.
-  - There is absolutely no need to use such a large-capacity model (2XL) for fine-tuning when the goal is simply to detect screws. We recommend attempting fine-tuning with a model size of S or smaller. Creating high-quality data is ten million times more important than increasing the number of model parameters.
+  - There is absolutely no need to use such a large-capacity model (2XL) for fine-tuning when the goal is simply to detect screws. I recommend attempting fine-tuning with a model size of S or smaller. Creating high-quality data is ten million times more important than increasing the number of model parameters.
   - https://github.com/PINTO0309/LINEAE/releases/download/weights/lineae_2xl_1x3x640x640_1100_screw.onnx
 
   https://github.com/user-attachments/assets/ee20aa0b-e8c8-4bee-a86c-ed10f2bad371
