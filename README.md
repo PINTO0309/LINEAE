@@ -1091,7 +1091,7 @@ LINEAE is distributed under the root [Apache License 2.0](LICENSE).
   }
   ```
 - screws Computer Vision Model - CC BY 4.0
-  ```
+  ```bibtex
   @misc{ screws-ybbio_dataset,
     title = { screws Dataset },
     type = { Open Source Dataset },
@@ -1105,7 +1105,7 @@ LINEAE is distributed under the root [Apache License 2.0](LICENSE).
   }
   ```
 - bolt Computer Vision Dataset - CC BY 4.0
-  ```
+  ```bibtex
   @misc{ bolt-wheeq_dataset,
     title = { bolt Dataset },
     type = { Open Source Dataset },
