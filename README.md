@@ -38,6 +38,7 @@ LINEAE (**LINEA E**nhanced) is an experimental successor to [LINEA: Fast and acc
   - The augmented dataset of 100,000 screws consists of a large volume of synthetic data featuring significant occlusion caused by overlapping screws.
   - To further improve quality from this stage, the key is not simply to massively increase the volume of data, but to patiently augment the dataset—even if only in small increments—with real-world data representing patterns that are difficult to detect.
   - I believe that simply adding 100 images containing a significant amount of real-world noise would likely lead to a marked improvement in accuracy.
+  - https://github.com/PINTO0309/LINEAE/releases/download/weights/lineae_2xl_1x3x640x640_1100_screw_ext.onnx
 
   https://github.com/user-attachments/assets/790b7e90-82c9-4c35-969a-217444d9f886
 
