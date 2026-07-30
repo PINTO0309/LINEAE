@@ -42,6 +42,20 @@ LINEAE (**LINEA E**nhanced) is an experimental successor to [LINEA: Fast and acc
 
   https://github.com/user-attachments/assets/790b7e90-82c9-4c35-969a-217444d9f886
 
+- LINEAE-2XL ONNX (1.5 GB) + TensorRT BF16 + RTX3070 - After fine-tuning with data from 200,000 composite screws
+  - I fine-tuned the model by adding a large number of realistic silver screws to the training data.
+  - Detection capabilities have clearly improved.
+  - Since noise padding via blurring is not used, detection becomes unstable if the camera is intentionally shaken.
+  - Despite the 640x480 VHD image quality, we are now able to detect screws with near-perfect accuracy.
+
+  https://github.com/user-attachments/assets/08a4c00a-8db1-4b45-87a6-84d1efd6686c
+
+  - The screw data generated via automatic synthesis is shown in the figure below.
+
+  |Non-overlapping annotations|Annotation overlay|
+  |:-:|:-:|
+  |<img width="640" height="640" alt="imgv2_val_000040" src="https://github.com/user-attachments/assets/94a8337a-fd92-4313-82ba-8f372ae1b837" />|<img width="640" height="640" alt="imgv2_val_000040" src="https://github.com/user-attachments/assets/3512e67e-789c-401f-ac01-3d3ec89c49eb" />|
+
 ## Setup
 
 The Python version and dependencies are pinned in `pyproject.toml`.
