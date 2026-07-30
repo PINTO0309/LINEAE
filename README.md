@@ -47,6 +47,7 @@ LINEAE (**LINEA E**nhanced) is an experimental successor to [LINEA: Fast and acc
   - Detection capabilities have clearly improved.
   - Since noise padding via blurring is not used, detection becomes unstable if the camera is intentionally shaken.
   - Despite the 640x480 VHD image quality, we are now able to detect screws with near-perfect accuracy.
+  - https://github.com/PINTO0309/LINEAE/releases/download/weights/lineae_2xl_1x3x640x640_1100_screw_ext2.onnx
 
   https://github.com/user-attachments/assets/08a4c00a-8db1-4b45-87a6-84d1efd6686c
 
