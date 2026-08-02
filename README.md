@@ -58,6 +58,7 @@ LINEAE (**LINEA E**nhanced) is an experimental successor to [LINEA: Fast and acc
   |<img width="640" height="640" alt="imgv2_val_000040" src="https://github.com/user-attachments/assets/94a8337a-fd92-4313-82ba-8f372ae1b837" />|<img width="640" height="640" alt="imgv2_val_000040" src="https://github.com/user-attachments/assets/3512e67e-789c-401f-ac01-3d3ec89c49eb" />|
 
   - I tried scattering 300 screws across a badminton court. Dealing with this is absolutely impossible. LOL.
+  - It is expected behavior that screws are not detected, as straight lines shorter than 5 pixels are excluded from the learning process.
 
   <img width="680" height="453" alt="image" src="https://github.com/user-attachments/assets/f9206a71-334b-4c60-8ab9-065df30a5200" />
 
