@@ -232,3 +232,5 @@ outputs/
 runs/
 *.engine
 *.onnx.data
+*.jpg
+*.png
