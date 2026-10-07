@@ -69,7 +69,7 @@ The Python version and dependencies are pinned in `pyproject.toml`.
 ```bash
 git clone https://github.com/PINTO0309/LINEAE.git && cd LINEAE
 curl -LsSf https://astral.sh/uv/install.sh | sh
-uv sync
+uv sync --locked
 source .venv/bin/activate
 ```
 

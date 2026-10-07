@@ -165,7 +165,8 @@ def _write_json_atomic(payload: dict[str, Any], output_path: Path) -> None:
     )
     temporary_path = Path(temporary_name)
     try:
-        os.fchmod(descriptor, 0o644)
+        if hasattr(os, "fchmod"):
+            os.fchmod(descriptor, 0o644)
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             json.dump(payload, stream, ensure_ascii=False, indent=2)
             stream.write("\n")
