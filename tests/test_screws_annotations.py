@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import cv2
@@ -74,7 +75,8 @@ def test_converter_preserves_source_and_writes_dxdy_metadata(tmp_path):
     assert converted["source_annotation_sha256"] == sha256_file(input_path)
     assert summary.image_count == 1
     assert summary.line_count == 1
-    assert output_path.stat().st_mode & 0o777 == 0o644
+    if os.name == "posix":
+        assert output_path.stat().st_mode & 0o777 == 0o644
 
 
 def test_converter_is_deterministic_and_requires_explicit_overwrite(tmp_path):

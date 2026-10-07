@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import cv2
@@ -35,7 +36,7 @@ def test_read_rgb_image_converts_bgr_and_disables_exif_rotation(monkeypatch):
 
 def test_read_rgb_image_reports_the_failed_path(tmp_path):
     missing = tmp_path / "missing.jpg"
-    with pytest.raises(RuntimeError, match=str(missing)):
+    with pytest.raises(RuntimeError, match=re.escape(str(missing))):
         read_rgb_image(missing)
 
 
